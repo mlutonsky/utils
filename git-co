@@ -51,7 +51,8 @@ _find_branches_by_levenshtein() {
   local results=""
   while IFS= read -r branch; do
     if [ -n "$branch" ]; then
-      local distance=$(_levenshtein_distance "$input" "$branch")
+      local distance
+      distance=$(_levenshtein_distance "$input" "$branch")
       if [ -n "$distance" ] && [ "$distance" -le "$max_distance" ]; then
         # Format: distance|branch (for sorting)
         results="$results"$'\n'"$distance|$branch"
@@ -68,7 +69,8 @@ _find_similar_branches() {
   local input_lower="${input,,}"
 
   # Get all branches (local and remote)
-  local all_branches=$(
+  local all_branches
+  all_branches=$(
     { git for-each-ref --format='%(refname:short)' refs/heads/ 2>/dev/null;
       git for-each-ref --format='%(refname:short)' refs/remotes/origin/ 2>/dev/null | sed 's|^origin/||';
     } | grep -v '^HEAD$' | sort -u
@@ -97,7 +99,8 @@ _find_similar_branches() {
   fi
 
   # Count results
-  local result_count=$(echo "$results" | grep -c '^' 2>/dev/null || echo "0")
+  local result_count
+  result_count=$(echo "$results" | grep -c '^' 2>/dev/null || echo "0")
 
   # If we got fewer than 3 results, try Levenshtein distance as fallback
   if [ "$result_count" -lt 3 ] && command -v python3 &> /dev/null; then
@@ -107,7 +110,8 @@ _find_similar_branches() {
     [ "$max_distance" -lt 3 ] && max_distance=3
     [ "$max_distance" -gt 8 ] && max_distance=8
 
-    local levenshtein_results=$(_find_branches_by_levenshtein "$input" "$all_branches" "$max_distance")
+    local levenshtein_results
+    levenshtein_results=$(_find_branches_by_levenshtein "$input" "$all_branches" "$max_distance")
 
     # Merge results (prioritize fzf/substring matches, then add Levenshtein matches)
     if [ -n "$results" ]; then
@@ -151,7 +155,8 @@ co() {
       similar_branches=$(_find_similar_branches "$1")
 
       if [ -n "$similar_branches" ]; then
-        local branch_count=$(echo "$similar_branches" | grep -c '^')
+        local branch_count
+        branch_count=$(echo "$similar_branches" | grep -c '^')
 
         if [ "$branch_count" -eq 1 ]; then
           local branch_name="$similar_branches"
@@ -166,10 +171,11 @@ co() {
           echo "Branch '$1' not found. Did you mean one of these?"
           echo "$similar_branches" | nl
           echo ""
-          read -p "Select branch number (or press Enter to cancel): " selection
+          read -r -p "Select branch number (or press Enter to cancel): " selection
 
           if [ -n "$selection" ] && [ "$selection" -gt 0 ]; then
-            local branch_name=$(echo "$similar_branches" | sed -n "${selection}p")
+            local branch_name
+            branch_name=$(echo "$similar_branches" | sed -n "${selection}p")
             if [ -n "$branch_name" ]; then
               echo "Switching to '$branch_name'..."
               if git rev-parse --verify "$branch_name" >/dev/null 2>&1; then
