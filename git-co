@@ -173,7 +173,7 @@ co() {
           echo ""
           read -r -p "Select branch number (or press Enter to cancel): " selection
 
-          if [ -n "$selection" ] && [ "$selection" -gt 0 ]; then
+          if [[ "$selection" =~ ^[0-9]+$ ]] && [ "$selection" -gt 0 ]; then
             local branch_name
             branch_name=$(echo "$similar_branches" | sed -n "${selection}p")
             if [ -n "$branch_name" ]; then
