@@ -45,6 +45,9 @@ case "$1" in
     -h|--help) _print_help; exit 0 ;;
 esac
 
+# Ensure session DBus is accessible (needed when running as a systemd user service)
+export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=/run/user/$(id -u)/bus}"
+
 IDLE_THRESHOLD_MINS="${IDLE_THRESHOLD_MINS:-15}"
 IDLE_PROFILE="${IDLE_PROFILE:-powersave}"
 CHECK_INTERVAL="${CHECK_INTERVAL:-30}"
