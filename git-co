@@ -148,7 +148,6 @@ co() {
     # Try to create from origin first
     if git rev-parse --verify "origin/$1" >/dev/null 2>&1; then
       git switch -c "$1" "origin/$1"
-      git pull --all
     else
       # Branch doesn't exist, try to find similar branches
       local similar_branches
@@ -165,7 +164,6 @@ co() {
             git switch "$branch_name"
           elif git rev-parse --verify "origin/$branch_name" >/dev/null 2>&1; then
             git switch -c "$branch_name" "origin/$branch_name"
-            git pull --all
           fi
         else
           echo "Branch '$1' not found. Did you mean one of these?"
@@ -182,7 +180,6 @@ co() {
                 git switch "$branch_name"
               elif git rev-parse --verify "origin/$branch_name" >/dev/null 2>&1; then
                 git switch -c "$branch_name" "origin/$branch_name"
-                git pull --all
               fi
             fi
           fi
