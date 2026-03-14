@@ -16,52 +16,44 @@
 #   git-co logn            # typo → finds 'feat/login', auto-checks out
 #   git-co feat            # multiple matches → interactive numbered menu
 
-_levenshtein_distance() {
-  # Calculate Levenshtein distance between two strings using Python
-  python3 -c "
+_find_branches_by_levenshtein() {
+  local input="$1"
+  local all_branches="$2"
+  local max_distance="${3:-5}"
+
+  # Compute all Levenshtein distances in a single python3 call
+  echo "$all_branches" | python3 -c '
 import sys
+
 def levenshtein(s1, s2):
+    s1, s2 = s1.lower(), s2.lower()
     if len(s1) < len(s2):
-        return levenshtein(s2, s1)
+        s1, s2 = s2, s1
     if len(s2) == 0:
         return len(s1)
     previous_row = range(len(s2) + 1)
     for i, c1 in enumerate(s1):
         current_row = [i + 1]
         for j, c2 in enumerate(s2):
-            insertions = previous_row[j + 1] + 1
-            deletions = current_row[j] + 1
-            substitutions = previous_row[j] + (c1 != c2)
-            current_row.append(min(insertions, deletions, substitutions))
+            current_row.append(min(
+                previous_row[j + 1] + 1,
+                current_row[j] + 1,
+                previous_row[j] + (c1 != c2)
+            ))
         previous_row = current_row
     return previous_row[-1]
 
-s1 = sys.argv[1].lower()
-s2 = sys.argv[2].lower()
-print(levenshtein(s1, s2))
-" "$1" "$2" 2>/dev/null
-}
-
-_find_branches_by_levenshtein() {
-  local input="$1"
-  local all_branches="$2"
-  local max_distance="${3:-5}"  # Default max distance of 5
-
-  # Calculate distance for each branch and sort by distance
-  local results=""
-  while IFS= read -r branch; do
-    if [ -n "$branch" ]; then
-      local distance
-      distance=$(_levenshtein_distance "$input" "$branch")
-      if [ -n "$distance" ] && [ "$distance" -le "$max_distance" ]; then
-        # Format: distance|branch (for sorting)
-        results="$results"$'\n'"$distance|$branch"
-      fi
-    fi
-  done <<< "$all_branches"
-
-  # Sort by distance (numerically) and return just the branch names
-  echo "$results" | grep -v '^$' | sort -t'|' -k1,1n | cut -d'|' -f2 | head -10
+input_str = sys.argv[1]
+max_dist = int(sys.argv[2])
+branches = [line.strip() for line in sys.stdin if line.strip()]
+results = sorted(
+    [(levenshtein(input_str, b), b) for b in branches],
+    key=lambda x: x[0]
+)
+for dist, branch in results:
+    if dist <= max_dist:
+        print(branch)
+' "$input" "$max_distance"
 }
 
 _find_similar_branches() {
