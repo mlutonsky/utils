@@ -13,6 +13,7 @@ Each script is standalone, self-documenting, and follows a consistent style.
 | `git-branch-clean` | Delete local branches whose remote is gone |
 | `git-branch-close` | FF-merge current branch into default, push, delete |
 | `idle-power-manager.sh` | Switch CPU tuned profile on GNOME idle/wake |
+| `install.sh` | Install all scripts to ~/.local/bin via symlinks |
 
 ---
 
@@ -80,3 +81,4 @@ Prefer `git switch` over `git checkout` for branch operations.
    - Add a row to the index table at the top.
    - Add a full section (`##`) with description, usage, example output, and install one-liner.
 4. **Update `CLAUDE.md`:** add a row to the Scripts table above.
+5. **Add a symlink entry to `install.sh`:** append the script name to the `SCRIPTS` array.

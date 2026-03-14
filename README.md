@@ -13,6 +13,26 @@ A collection of small shell utilities.
 
 ---
 
+## Install all scripts
+
+Run `install.sh` to symlink all scripts to `~/.local/bin/` in one command:
+
+```sh
+./install.sh
+```
+
+Use `--force` to overwrite existing symlinks:
+
+```sh
+./install.sh --force
+```
+
+`~/.local/bin/` is created automatically if it does not exist. Each script is
+symlinked from the repository directory, so you can update scripts with a
+`git pull` and the changes take effect immediately.
+
+---
+
 ## git-co
 
 **Fuzzy-matching git branch checkout.**
