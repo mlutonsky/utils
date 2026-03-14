@@ -1,0 +1,194 @@
+#!/bin/bash
+# git-co — fuzzy-matching git branch checkout
+#
+# Checks out a branch by name. If the exact branch is not found, falls back to
+# fuzzy matching (fzf if available, then substring, then Levenshtein distance)
+# and either auto-switches to the single closest match or presents a numbered
+# menu when multiple candidates exist.
+#
+# Usage:
+#   git-co <branch>
+#   git-co -h | --help
+#
+# Examples:
+#   git-co main            # exact match — switches immediately
+#   git-co feat/login      # tracks origin/feat/login if not local
+#   git-co logn            # typo → finds 'feat/login', auto-checks out
+#   git-co feat            # multiple matches → interactive numbered menu
+
+_levenshtein_distance() {
+  # Calculate Levenshtein distance between two strings using Python
+  python3 -c "
+import sys
+def levenshtein(s1, s2):
+    if len(s1) < len(s2):
+        return levenshtein(s2, s1)
+    if len(s2) == 0:
+        return len(s1)
+    previous_row = range(len(s2) + 1)
+    for i, c1 in enumerate(s1):
+        current_row = [i + 1]
+        for j, c2 in enumerate(s2):
+            insertions = previous_row[j + 1] + 1
+            deletions = current_row[j] + 1
+            substitutions = previous_row[j] + (c1 != c2)
+            current_row.append(min(insertions, deletions, substitutions))
+        previous_row = current_row
+    return previous_row[-1]
+
+s1 = sys.argv[1].lower()
+s2 = sys.argv[2].lower()
+print(levenshtein(s1, s2))
+" "$1" "$2" 2>/dev/null
+}
+
+_find_branches_by_levenshtein() {
+  local input="$1"
+  local all_branches="$2"
+  local max_distance="${3:-5}"  # Default max distance of 5
+
+  # Calculate distance for each branch and sort by distance
+  local results=""
+  while IFS= read -r branch; do
+    if [ -n "$branch" ]; then
+      local distance=$(_levenshtein_distance "$input" "$branch")
+      if [ -n "$distance" ] && [ "$distance" -le "$max_distance" ]; then
+        # Format: distance|branch (for sorting)
+        results="$results"$'\n'"$distance|$branch"
+      fi
+    fi
+  done <<< "$all_branches"
+
+  # Sort by distance (numerically) and return just the branch names
+  echo "$results" | grep -v '^$' | sort -t'|' -k1,1n | cut -d'|' -f2 | head -10
+}
+
+_find_similar_branches() {
+  local input="$1"
+  local input_lower="${input,,}"
+
+  # Get all branches (local and remote)
+  local all_branches=$(
+    { git for-each-ref --format='%(refname:short)' refs/heads/ 2>/dev/null;
+      git for-each-ref --format='%(refname:short)' refs/remotes/origin/ 2>/dev/null | sed 's|^origin/||';
+    } | grep -v '^HEAD$' | sort -u
+  )
+
+  local results=""
+
+  # Use fzf if available for better fuzzy matching
+  if command -v fzf &> /dev/null; then
+    results=$(echo "$all_branches" | fzf --filter "$input" --no-sort -m | head -10)
+  else
+    # Fallback: simple fuzzy matching (contains substring)
+    local similar=""
+    while IFS= read -r branch; do
+      local branch_lower="${branch,,}"
+      # Exact case-insensitive match gets priority
+      if [ "$branch_lower" = "$input_lower" ]; then
+        similar="$branch"$'\n'"$similar"
+      # Substring match
+      elif [[ "$branch_lower" =~ $input_lower ]]; then
+        similar="$similar"$'\n'"$branch"
+      fi
+    done <<< "$all_branches"
+
+    results=$(echo "$similar" | grep -v '^$' | head -10)
+  fi
+
+  # Count results
+  local result_count=$(echo "$results" | grep -c '^' 2>/dev/null || echo "0")
+
+  # If we got fewer than 3 results, try Levenshtein distance as fallback
+  if [ "$result_count" -lt 3 ] && command -v python3 &> /dev/null; then
+    # Calculate max distance based on input length (allow more distance for longer strings)
+    local input_length=${#input}
+    local max_distance=$((input_length / 2 + 2))
+    [ "$max_distance" -lt 3 ] && max_distance=3
+    [ "$max_distance" -gt 8 ] && max_distance=8
+
+    local levenshtein_results=$(_find_branches_by_levenshtein "$input" "$all_branches" "$max_distance")
+
+    # Merge results (prioritize fzf/substring matches, then add Levenshtein matches)
+    if [ -n "$results" ]; then
+      # Combine and deduplicate
+      results=$(echo -e "${results}\n${levenshtein_results}" | awk '!seen[$0]++' | head -10)
+    else
+      results="$levenshtein_results"
+    fi
+  fi
+
+  echo "$results"
+}
+
+_print_help() {
+  awk 'NR==1{next} /^#/{sub(/^# ?/,""); print; next} {exit}' "$0"
+}
+
+co() {
+  case "$1" in
+    -h|--help)
+      _print_help
+      return 0
+      ;;
+    "")
+      echo "Usage: git-co <branch>  (git-co --help for details)"
+      return 1
+      ;;
+  esac
+
+  if git rev-parse --verify "$1" >/dev/null 2>&1; then
+    # Branch exists locally, switch to it
+    git switch "$1"
+  else
+    # Try to create from origin first
+    if git rev-parse --verify "origin/$1" >/dev/null 2>&1; then
+      git switch -c "$1" "origin/$1"
+      git pull --all
+    else
+      # Branch doesn't exist, try to find similar branches
+      local similar_branches
+      similar_branches=$(_find_similar_branches "$1")
+
+      if [ -n "$similar_branches" ]; then
+        local branch_count=$(echo "$similar_branches" | grep -c '^')
+
+        if [ "$branch_count" -eq 1 ]; then
+          local branch_name="$similar_branches"
+          echo "Note: Branch '$1' not found. Automatically checking out similar branch '$branch_name'."
+          if git rev-parse --verify "$branch_name" >/dev/null 2>&1; then
+            git switch "$branch_name"
+          elif git rev-parse --verify "origin/$branch_name" >/dev/null 2>&1; then
+            git switch -c "$branch_name" "origin/$branch_name"
+            git pull --all
+          fi
+        else
+          echo "Branch '$1' not found. Did you mean one of these?"
+          echo "$similar_branches" | nl
+          echo ""
+          read -p "Select branch number (or press Enter to cancel): " selection
+
+          if [ -n "$selection" ] && [ "$selection" -gt 0 ]; then
+            local branch_name=$(echo "$similar_branches" | sed -n "${selection}p")
+            if [ -n "$branch_name" ]; then
+              echo "Switching to '$branch_name'..."
+              if git rev-parse --verify "$branch_name" >/dev/null 2>&1; then
+                git switch "$branch_name"
+              elif git rev-parse --verify "origin/$branch_name" >/dev/null 2>&1; then
+                git switch -c "$branch_name" "origin/$branch_name"
+                git pull --all
+              fi
+            fi
+          fi
+        fi
+      else
+        echo "fatal: invalid reference: '$1'"
+        echo "No similar branches found."
+        return 1
+      fi
+    fi
+  fi
+}
+
+# Run the main function with all arguments
+co "$@"
