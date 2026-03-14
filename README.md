@@ -59,7 +59,7 @@ configurable idle timeout and restores the performance profile as soon as
 activity is detected. The performance profile is auto-detected from the active
 tuned profile at startup.
 
-**Requirements:** `gdbus`, `tuned`, `tuned-adm`, GNOME session (Wayland)
+**Requirements:** `gdbus` (glib2), `tuned` + `tuned-adm`, GNOME session (Wayland), `wheel` group membership
 
 ### Usage
 
@@ -80,6 +80,29 @@ All settings are controlled via environment variables:
 | `CHECK_INTERVAL`     | `30`                                           | Seconds between idle checks                     |
 | `WAKE_THRESHOLD_SECS`| `3`                                            | Idle must drop below this to count as "woke up" |
 | `LOG_FILE`           | `~/.local/share/idle-power-manager.log`        | Log file path                                   |
+
+### Dependencies
+
+| Dependency | Notes |
+|------------|-------|
+| `gdbus` | DBus CLI tool from the `glib2` package — usually pre-installed on GNOME |
+| `tuned` | Must be installed and the system service running |
+| `tuned-adm` | CLI for tuned, part of the `tuned` package |
+| polkit / `wheel` group | Profile switching calls tuned via system DBus; polkit grants access to `wheel` group members without sudo |
+| GNOME session (Wayland) | Idle time is read from `org.gnome.Mutter.IdleMonitor` |
+
+Install and enable tuned if not present:
+
+```sh
+sudo dnf install tuned        # Fedora/RHEL
+sudo systemctl enable --now tuned
+```
+
+Verify your user is in the `wheel` group:
+
+```sh
+groups $USER   # should include 'wheel'
+```
 
 ### Install as a systemd user service
 

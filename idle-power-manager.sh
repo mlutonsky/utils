@@ -6,7 +6,13 @@
 # restores the performance profile as soon as activity is detected.
 # Performance profile is auto-detected at startup from the current tuned profile.
 #
-# Requirements: gdbus, tuned, tuned-adm, GNOME session (Wayland)
+# Requirements:
+#   gdbus       - DBus CLI tool (glib2 package, usually pre-installed on GNOME)
+#   tuned       - system service must be installed and running (dnf install tuned)
+#   tuned-adm   - CLI for tuned, part of the tuned package
+#   polkit      - profile switching uses tuned's system DBus interface; user must
+#                 be in the 'wheel' group for polkit to allow it without sudo
+#   GNOME session (Wayland) - idle time is read from org.gnome.Mutter.IdleMonitor
 #
 # Usage:
 #   idle-power-manager.sh [-h|--help]
