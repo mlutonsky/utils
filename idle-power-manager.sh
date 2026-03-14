@@ -86,16 +86,14 @@ get_current_profile() {
 # --- Switch tuned profile via DBus (polkit allows wheel group, no sudo needed) ---
 switch_profile() {
     local profile="$1"
-    local result
-    result=$(gdbus call --system \
+    if gdbus call --system \
         --dest com.redhat.tuned \
         --object-path /Tuned \
         --method com.redhat.tuned.control.switch_profile \
-        "$profile" 2>&1)
-    if echo "$result" | grep -q "true"; then
+        "$profile" > /dev/null 2>&1; then
         return 0
     else
-        log "ERROR" "Failed to switch to profile '$profile': $result"
+        log "ERROR" "Failed to switch to profile '$profile'"
         return 1
     fi
 }
