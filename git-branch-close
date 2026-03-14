@@ -1,0 +1,82 @@
+#!/bin/bash
+# git-branch-close — fast-forward merge current branch into default branch, push, and delete it
+#
+# Merges the current feature branch into the repository's default branch
+# (auto-detected as main or master) via fast-forward only, pushes the default
+# branch to origin, then deletes the feature branch both locally and on the remote.
+# Fails fast if the fast-forward is not possible (i.e. default branch has diverged).
+#
+# Usage:
+#   git-branch-close [-h|--help]
+#
+# Example:
+#   $ git-branch-close
+#   Closing branch: feature/login → main
+#   Fetching latest changes...
+#   Switching to main...
+#   Fast-forwarding main to feature/login...
+#   Pushing main to origin...
+#   Branch feature/login successfully closed and merged into main.
+
+_print_help() {
+  awk 'NR==1{next} /^#/{sub(/^# ?/,""); print; next} {exit}' "$0"
+}
+
+case "$1" in
+  -h|--help) _print_help; exit 0 ;;
+esac
+
+if ! git rev-parse --git-dir > /dev/null 2>&1; then
+  echo "fatal: not a git repository"
+  exit 1
+fi
+
+CURRENT_BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null)
+
+if [ -z "$CURRENT_BRANCH" ]; then
+  echo "fatal: not on a branch (detached HEAD)"
+  exit 1
+fi
+
+# Auto-detect default branch from origin/HEAD, fall back to checking main/master
+DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||')
+if [ -z "$DEFAULT_BRANCH" ]; then
+  if git show-ref --verify --quiet refs/heads/main; then
+    DEFAULT_BRANCH="main"
+  elif git show-ref --verify --quiet refs/heads/master; then
+    DEFAULT_BRANCH="master"
+  else
+    echo "fatal: could not determine default branch (tried main, master)"
+    exit 1
+  fi
+fi
+
+if [ "$CURRENT_BRANCH" = "$DEFAULT_BRANCH" ]; then
+  echo "Already on $DEFAULT_BRANCH, nothing to close."
+  exit 1
+fi
+
+echo "Closing branch: $CURRENT_BRANCH → $DEFAULT_BRANCH"
+
+echo "Fetching latest changes..."
+git fetch origin || { echo "fatal: failed to fetch from origin"; exit 1; }
+
+echo "Switching to $DEFAULT_BRANCH..."
+git switch "$DEFAULT_BRANCH" || { echo "fatal: failed to switch to $DEFAULT_BRANCH"; exit 1; }
+
+echo "Pulling latest $DEFAULT_BRANCH..."
+git pull origin "$DEFAULT_BRANCH" || { echo "fatal: failed to pull $DEFAULT_BRANCH"; exit 1; }
+
+echo "Fast-forwarding $DEFAULT_BRANCH to $CURRENT_BRANCH..."
+git merge --ff-only "$CURRENT_BRANCH" || { echo "fatal: fast-forward failed — $DEFAULT_BRANCH has diverged from $CURRENT_BRANCH"; exit 1; }
+
+echo "Pushing $DEFAULT_BRANCH to origin..."
+git push origin "$DEFAULT_BRANCH" || { echo "fatal: failed to push $DEFAULT_BRANCH"; exit 1; }
+
+echo "Deleting local branch $CURRENT_BRANCH..."
+git branch -d "$CURRENT_BRANCH" || { echo "fatal: failed to delete local branch $CURRENT_BRANCH"; exit 1; }
+
+echo "Deleting remote branch $CURRENT_BRANCH..."
+git push origin --delete "$CURRENT_BRANCH" || { echo "fatal: failed to delete remote branch $CURRENT_BRANCH"; exit 1; }
+
+echo "Branch $CURRENT_BRANCH successfully closed and merged into $DEFAULT_BRANCH."

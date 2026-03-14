@@ -1,0 +1,43 @@
+#!/bin/bash
+# git-branch-clean — prune stale remote refs and delete local branches whose remote is gone
+#
+# Runs git fetch --prune to remove stale remote tracking refs, then deletes every
+# local branch that was tracking a remote branch which no longer exists
+# (reported as ': gone]' by git branch -vv).
+#
+# Usage:
+#   git-branch-clean [-h|--help]
+#
+# Example:
+#   $ git-branch-clean
+#   Fetching and pruning...
+#   Deleted branch feature/login (was abc1234).
+#   Deleted branch fix/typo (was def5678).
+#   No stale branches to clean up.
+
+_print_help() {
+  awk 'NR==1{next} /^#/{sub(/^# ?/,""); print; next} {exit}' "$0"
+}
+
+case "$1" in
+  -h|--help) _print_help; exit 0 ;;
+esac
+
+if ! git rev-parse --git-dir > /dev/null 2>&1; then
+  echo "fatal: not a git repository"
+  exit 1
+fi
+
+echo "Fetching and pruning..."
+git fetch --prune
+
+gone=$(git branch -vv | awk '/: gone]/{print ($1 == "*" ? $2 : $1)}')
+
+if [ -z "$gone" ]; then
+  echo "No stale branches to clean up."
+  exit 0
+fi
+
+while IFS= read -r branch; do
+  git branch -D "$branch"
+done <<< "$gone"

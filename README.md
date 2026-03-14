@@ -7,6 +7,8 @@ A collection of small shell utilities.
 | Script | Description |
 |--------|-------------|
 | [git-co](#git-co) | Fuzzy-matching git branch checkout with typo correction and interactive selection |
+| [git-branch-clean](#git-branch-clean) | Prune stale remote refs and delete local branches whose remote is gone |
+| [git-branch-close](#git-branch-close) | Fast-forward merge current branch into default branch, push, and delete it |
 | [idle-power-manager.sh](#idle-power-managersh) | Automatic CPU power profile switcher based on GNOME idle detection |
 
 ---
@@ -46,6 +48,73 @@ ln -s "$PWD/git-co" ~/.local/bin/git-co
 ```
 
 `fzf` is optional but recommended for better fuzzy matching.
+
+---
+
+## git-branch-clean
+
+**Prune stale remote refs and delete local branches whose remote is gone.**
+
+Runs `git fetch --prune`, then deletes every local branch that tracked a remote
+branch which no longer exists. Safe to run routinely after merging or closing
+feature branches.
+
+### Usage
+
+```
+git-branch-clean [-h|--help]
+```
+
+### Example
+
+```sh
+$ git-branch-clean
+Fetching and pruning...
+Deleted branch feature/login (was abc1234).
+Deleted branch fix/typo (was def5678).
+```
+
+### Install
+
+```sh
+ln -s "$PWD/git-branch-clean" ~/.local/bin/git-branch-clean
+```
+
+---
+
+## git-branch-close
+
+**Fast-forward merge current branch into the default branch, push, and delete it.**
+
+A single command to finish a feature branch: fast-forwards `main` (or `master`)
+to the current branch, pushes to origin, and removes the branch locally and
+remotely. The default branch is auto-detected from `origin/HEAD`; falls back to
+checking for `main` then `master`. Refuses to proceed if a fast-forward is not
+possible.
+
+### Usage
+
+```
+git-branch-close [-h|--help]
+```
+
+### Example
+
+```sh
+$ git-branch-close
+Closing branch: feature/login → main
+Fetching latest changes...
+Switching to main...
+Fast-forwarding main to feature/login...
+Pushing main to origin...
+Branch feature/login successfully closed and merged into main.
+```
+
+### Install
+
+```sh
+ln -s "$PWD/git-branch-close" ~/.local/bin/git-branch-close
+```
 
 ---
 
