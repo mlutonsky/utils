@@ -25,6 +25,7 @@
 #   CHECK_INTERVAL       - seconds between idle checks (default: 30)
 #   WAKE_THRESHOLD_SECS  - idle must drop below this to count as "woke up" (default: 3)
 #   LOG_FILE             - log file path (default: ~/.local/share/idle-power-manager.log)
+#   MAX_LOG_LINES        - maximum number of lines to keep in the log file (default: 10000)
 #
 # Examples:
 #   idle-power-manager.sh                          # run with defaults
@@ -49,6 +50,7 @@ IDLE_PROFILE="${IDLE_PROFILE:-powersave}"
 CHECK_INTERVAL="${CHECK_INTERVAL:-30}"
 WAKE_THRESHOLD_SECS="${WAKE_THRESHOLD_SECS:-3}"
 LOG_FILE="${LOG_FILE:-$HOME/.local/share/idle-power-manager.log}"
+MAX_LOG_LINES="${MAX_LOG_LINES:-10000}"
 
 IDLE_THRESHOLD_MS=$(( IDLE_THRESHOLD_MINS * 60 * 1000 ))
 WAKE_THRESHOLD_MS=$(( WAKE_THRESHOLD_SECS * 1000 ))
@@ -57,6 +59,23 @@ WAKE_THRESHOLD_MS=$(( WAKE_THRESHOLD_SECS * 1000 ))
 log() {
     local level="$1"; shift
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] [$level] $*" | tee -a "$LOG_FILE" >&2
+}
+
+# --- Log rotation ---
+rotate_log() {
+    if [[ -f "$LOG_FILE" ]]; then
+        local line_count
+        line_count=$(wc -l < "$LOG_FILE")
+        if (( line_count > MAX_LOG_LINES )); then
+            local tmp
+            tmp=$(mktemp)
+            if tail -n "$MAX_LOG_LINES" "$LOG_FILE" > "$tmp"; then
+                mv "$tmp" "$LOG_FILE" || rm -f "$tmp"
+            else
+                rm -f "$tmp"
+            fi
+        fi
+    fi
 }
 
 # --- Detect current performance profile at startup (save it for restoration) ---
@@ -124,6 +143,8 @@ fi
 log "INFO" "Performance profile: $PERFORMANCE_PROFILE | Idle profile: $IDLE_PROFILE"
 
 wait_for_session_bus || exit 1
+
+rotate_log
 
 state="active"  # "active" or "idle"
 
