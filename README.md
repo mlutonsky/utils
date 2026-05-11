@@ -9,6 +9,7 @@ A collection of small shell utilities.
 | [git-co](#git-co) | Fuzzy-matching git branch checkout with typo correction and interactive selection |
 | [git-branch-clean](#git-branch-clean) | Prune stale remote refs and delete local branches whose remote is gone |
 | [git-branch-close](#git-branch-close) | Fast-forward merge current branch into default branch, push, and delete it |
+| [git-commit-msg](#git-commit-msg) | Generate a commit message from staged (or unstaged) changes using Claude |
 | [idle-power-manager.sh](#idle-power-managersh) | Automatic CPU power profile switcher based on GNOME idle detection |
 
 ---
@@ -134,6 +135,42 @@ Branch feature/login successfully closed and merged into main.
 
 ```sh
 ln -s "$PWD/git-branch-close" ~/.local/bin/git-branch-close
+```
+
+---
+
+## git-commit-msg
+
+**Generate a commit message from staged (or unstaged) changes using Claude.**
+
+Inspects the current diff (staged changes first; falls back to all unstaged changes
+if nothing is staged), asks Claude to draft a concise commit message in plain
+imperative style, then opens your configured git editor pre-filled with the result
+so you can review and edit before committing.
+
+### Usage
+
+```
+git-commit-msg [-h|--help]
+```
+
+### Example
+
+```sh
+$ git-commit-msg
+Generating commit message...
+# editor opens pre-filled with:
+# Fix null pointer in auth middleware when session token is missing
+```
+
+### Requirements
+
+- `claude` — Claude CLI (`npm install -g @anthropic-ai/claude-code` or see [claude.ai/code](https://claude.ai/code))
+
+### Install
+
+```sh
+ln -s "$PWD/git-commit-msg" ~/.local/bin/git-commit-msg
 ```
 
 ---

@@ -12,6 +12,7 @@ Each script is standalone, self-documenting, and follows a consistent style.
 | `git-co` | Fuzzy-matching git branch checkout |
 | `git-branch-clean` | Delete local branches whose remote is gone |
 | `git-branch-close` | FF-merge current branch into default, push, delete |
+| `git-commit-msg` | Generate a commit message from staged/unstaged changes using Claude |
 | `idle-power-manager.sh` | Switch CPU tuned profile on GNOME idle/wake |
 | `install.sh` | Install all scripts to ~/.local/bin via symlinks |
 

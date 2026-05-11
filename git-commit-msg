@@ -1,0 +1,64 @@
+#!/bin/bash
+# git-commit-msg — generate a commit message from staged (or unstaged) changes using Claude
+#
+# Inspects the current diff (staged changes first; falls back to all unstaged
+# changes if nothing is staged), sends it to Claude to generate a concise
+# commit message, then opens your configured git editor pre-filled with the
+# generated message so you can review and edit before committing.
+#
+# Usage:
+#   git-commit-msg [-h|--help]
+#
+# Examples:
+#   git-commit-msg          # generate and open editor with commit message
+#
+# Requirements:
+#   claude   Claude CLI (https://claude.ai/code)
+
+_print_help() {
+  awk 'NR==1{next} /^#/{sub(/^# ?/,""); print; next} {exit}' "$0"
+}
+
+case "$1" in
+  -h|--help) _print_help; exit 0 ;;
+esac
+
+if ! git rev-parse --git-dir > /dev/null 2>&1; then
+  echo "fatal: not a git repository"
+  exit 1
+fi
+
+if ! command -v claude > /dev/null 2>&1; then
+  echo "fatal: claude CLI not found"
+  exit 1
+fi
+
+diff=$(git diff --cached)
+[ -z "$diff" ] && diff=$(git diff)
+
+if [ -z "$diff" ]; then
+  echo "fatal: no changes to generate message for"
+  exit 1
+fi
+
+prompt='Generate a git commit message for this diff.
+
+Rules:
+- Output ONLY the commit message — no preamble, no explanation, no markdown
+- First line: imperative mood, under 72 characters (e.g. "Fix login timeout", not "Fixed" or "Fixes")
+- If the change is non-trivial, add a blank line then a concise body (what changed and why, not how)
+- Do not add bullet lists or headers to the body — plain prose only'
+
+echo "Generating commit message..."
+message=$(printf '%s' "$diff" | claude -p "$prompt")
+
+if [ -z "$message" ]; then
+  echo "fatal: claude returned an empty message"
+  exit 1
+fi
+
+tmpfile=$(mktemp /tmp/git-commit-msg.XXXXXX)
+trap 'rm -f "$tmpfile"' EXIT
+
+printf '%s\n' "$message" > "$tmpfile"
+git commit -e -F "$tmpfile"
