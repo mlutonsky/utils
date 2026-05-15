@@ -1,0 +1,119 @@
+#!/usr/bin/env php
+<?php
+# neon2json — convert NEON (Nette Object Notation) to JSON
+#
+# Reads NEON from a file argument or stdin, parses it using Nette's NEON
+# library, and prints the corresponding JSON to stdout. Useful for letting
+# LLMs and other tools that don't speak NEON consume Nette config files.
+#
+# DateTime values are rendered as ISO 8601 strings. NEON entities are
+# rendered as { "value": ..., "attributes": {...} } objects.
+#
+# Usage:
+#   neon2json [-h|--help] [--pretty] [file]
+#
+# Options:
+#   --pretty   Pretty-print the JSON output (indented, multi-line)
+#
+# Examples:
+#   neon2json config.neon                # read file, compact JSON
+#   neon2json --pretty config.neon       # read file, pretty JSON
+#   cat config.neon | neon2json          # read stdin
+#   neon2json < config.neon              # read stdin
+#
+# Requirements:
+#   php       PHP 8.1+
+#   composer  run `composer install` in the repo to fetch nette/neon
+
+function _print_help(): void {
+	$fp = fopen(__FILE__, 'r');
+	fgets($fp); // shebang
+	fgets($fp); // <?php
+	while (($line = fgets($fp)) !== false) {
+		if ($line[0] !== '#') break;
+		echo preg_replace('/^# ?/', '', $line);
+	}
+	fclose($fp);
+}
+
+$pretty = false;
+$positional = [];
+foreach (array_slice($argv, 1) as $a) {
+	if ($a === '-h' || $a === '--help') { _print_help(); exit(0); }
+	if ($a === '--pretty') { $pretty = true; continue; }
+	if ($a !== '' && $a[0] === '-') {
+		fwrite(STDERR, "fatal: unknown option: $a\n");
+		exit(1);
+	}
+	$positional[] = $a;
+}
+
+if (count($positional) > 1) {
+	fwrite(STDERR, "fatal: too many arguments\n");
+	exit(1);
+}
+
+$autoload = __DIR__ . '/vendor/autoload.php';
+if (!is_file($autoload)) {
+	$real = realpath(__FILE__);
+	if ($real !== false) {
+		$autoload = dirname($real) . '/vendor/autoload.php';
+	}
+}
+if (!is_file($autoload)) {
+	fwrite(STDERR, "fatal: vendor/autoload.php not found; run `composer install` in the utils repo\n");
+	exit(1);
+}
+require $autoload;
+
+if (count($positional) === 1) {
+	$file = $positional[0];
+	if (!is_file($file)) {
+		fwrite(STDERR, "fatal: file not found: $file\n");
+		exit(1);
+	}
+	try {
+		$value = Nette\Neon\Neon::decodeFile($file);
+	} catch (Nette\Neon\Exception $e) {
+		fwrite(STDERR, "fatal: " . $e->getMessage() . "\n");
+		exit(1);
+	}
+} else {
+	$input = stream_get_contents(STDIN);
+	if ($input === false) {
+		fwrite(STDERR, "fatal: failed to read stdin\n");
+		exit(1);
+	}
+	if (str_starts_with($input, "\u{FEFF}")) {
+		$input = substr($input, 3);
+	}
+	try {
+		$value = Nette\Neon\Neon::decode($input);
+	} catch (Nette\Neon\Exception $e) {
+		fwrite(STDERR, "fatal: " . $e->getMessage() . "\n");
+		exit(1);
+	}
+}
+
+function _normalize(mixed $v): mixed {
+	if ($v instanceof DateTimeInterface) {
+		return $v->format(DateTimeInterface::ATOM);
+	}
+	if ($v instanceof Nette\Neon\Entity) {
+		return [
+			'__neon_entity' => true,
+			'value' => _normalize($v->value),
+			'attributes' => _normalize($v->attributes),
+		];
+	}
+	if (is_array($v)) {
+		return array_map('_normalize', $v);
+	}
+	return $v;
+}
+
+$flags = JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES;
+if ($pretty) {
+	$flags |= JSON_PRETTY_PRINT;
+}
+echo json_encode(_normalize($value), $flags) . "\n";

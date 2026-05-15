@@ -14,6 +14,7 @@ Each script is standalone, self-documenting, and follows a consistent style.
 | `git-branch-close` | FF-merge current branch into default, push, delete |
 | `git-commit-msg` | Generate a commit message from staged/unstaged changes using Claude |
 | `idle-power-manager.sh` | Switch CPU tuned profile on GNOME idle/wake |
+| `neon2json` | Convert NEON (Nette Object Notation) to JSON, from file or stdin |
 | `install.sh` | Install all scripts to ~/.local/bin via symlinks |
 
 ---

@@ -11,6 +11,7 @@ A collection of small shell utilities.
 | [git-branch-close](#git-branch-close) | Fast-forward merge current branch into default branch, push, and delete it |
 | [git-commit-msg](#git-commit-msg) | Generate a commit message from staged (or unstaged) changes using Claude |
 | [idle-power-manager.sh](#idle-power-managersh) | Automatic CPU power profile switcher based on GNOME idle detection |
+| [neon2json](#neon2json) | Convert NEON (Nette Object Notation) to JSON, for LLMs and tools that don't speak NEON |
 
 ---
 
@@ -291,3 +292,43 @@ Environment="IDLE_THRESHOLD_MINS=20"
 ```
 
 Then reload: `systemctl --user daemon-reload && systemctl --user restart idle-power-manager.service`
+
+---
+
+## neon2json
+
+**Convert NEON (Nette Object Notation) to JSON.**
+
+Parses NEON from a file argument or stdin using Nette's NEON library and prints
+the corresponding JSON to stdout. Useful for feeding Nette config files into
+LLMs and other tools that don't know the NEON format.
+
+DateTime values are rendered as ISO 8601 strings. NEON entities (e.g.
+`Service(arg: 1)`) are rendered as objects with `__neon_entity: true`, `value`,
+and `attributes` keys.
+
+### Usage
+
+```
+neon2json [-h|--help] [file]
+```
+
+### Examples
+
+```sh
+neon2json config.neon                # read file
+cat config.neon | neon2json          # read stdin
+neon2json < config.neon              # read stdin
+```
+
+### Requirements
+
+- `php` — PHP 8.1+
+- `composer` — run `composer install` in this repo to fetch `nette/neon`
+
+### Install
+
+```sh
+composer install
+ln -s "$PWD/neon2json" ~/.local/bin/neon2json
+```

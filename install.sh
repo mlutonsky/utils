@@ -31,7 +31,7 @@ esac
 
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 BIN_DIR="$HOME/.local/bin"
-SCRIPTS=(git-co git-branch-clean git-branch-close git-commit-msg idle-power-manager.sh)
+SCRIPTS=(git-co git-branch-clean git-branch-close git-commit-msg idle-power-manager.sh neon2json)
 
 if [ ! -d "$BIN_DIR" ]; then
   mkdir -p "$BIN_DIR"
