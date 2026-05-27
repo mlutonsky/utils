@@ -182,9 +182,10 @@ ln -s "$PWD/git-commit-msg" ~/.local/bin/git-commit-msg
 
 Monitors user activity via GNOME Mutter DBus (Wayland-native, no sudo needed).
 Switches to a powersave [tuned](https://tuned-project.org/) profile after a
-configurable idle timeout and restores the performance profile as soon as
-activity is detected. The performance profile is auto-detected from the active
-tuned profile at startup.
+configurable idle timeout. The profile that was active right before going idle
+is remembered and restored as soon as activity is detected — so whatever mode
+you were using (e.g. `balanced`) comes back on wake. Set `PERFORMANCE_PROFILE`
+to force a fixed profile instead.
 
 **Requirements:** `gdbus` (glib2), `tuned` + `tuned-adm`, GNOME session (Wayland), `wheel` group membership
 
@@ -202,7 +203,7 @@ All settings are controlled via environment variables:
 | Variable             | Default                                        | Description                                     |
 |----------------------|------------------------------------------------|-------------------------------------------------|
 | `IDLE_THRESHOLD_MINS`| `15`                                           | Minutes of inactivity before switching profiles |
-| `PERFORMANCE_PROFILE`| auto-detected from current tuned profile       | Profile to restore when activity is detected    |
+| `PERFORMANCE_PROFILE`| remembered profile from before idle            | Force a fixed profile on wake instead of restoring |
 | `IDLE_PROFILE`       | `powersave`                                    | Profile to apply when idle                      |
 | `CHECK_INTERVAL`     | `30`                                           | Seconds between idle checks                     |
 | `WAKE_THRESHOLD_SECS`| `3`                                            | Idle must drop below this to count as "woke up" |
