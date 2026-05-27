@@ -2,9 +2,10 @@
 # idle-power-manager.sh — automatic CPU power profile manager based on idle detection
 #
 # Monitors user activity via GNOME Mutter DBus (Wayland-native, no sudo needed).
-# Switches to a powersave tuned profile after a configurable idle timeout and
-# restores the performance profile as soon as activity is detected.
-# Performance profile is auto-detected at startup from the current tuned profile.
+# Switches to a powersave tuned profile after a configurable idle timeout. The
+# profile that was active right before going idle is remembered and restored as
+# soon as activity is detected, so whatever mode you were on (e.g. balanced)
+# comes back on wake. Setting PERFORMANCE_PROFILE forces a fixed profile instead.
 #
 # Requirements:
 #   gdbus       - DBus CLI tool (glib2 package, usually pre-installed on GNOME)
@@ -20,7 +21,8 @@
 #
 # Configuration (environment variables):
 #   IDLE_THRESHOLD_MINS  - minutes of inactivity before switching to idle profile (default: 15)
-#   PERFORMANCE_PROFILE  - tuned profile to restore on activity (default: auto-detected)
+#   PERFORMANCE_PROFILE  - force this tuned profile on activity instead of restoring
+#                          the one active before idle (default: remember & restore)
 #   IDLE_PROFILE         - tuned profile to use when idle (default: powersave)
 #   CHECK_INTERVAL       - seconds between idle checks (default: 30)
 #   WAKE_THRESHOLD_SECS  - idle must drop below this to count as "woke up" (default: 3)
@@ -129,19 +131,26 @@ mkdir -p "$(dirname "$LOG_FILE")"
 
 log "INFO" "Starting idle-power-manager (threshold: ${IDLE_THRESHOLD_MINS}m, check every: ${CHECK_INTERVAL}s)"
 
-# Auto-detect performance profile: use current profile at startup (unless it's already powersave)
+# PERFORMANCE_PROFILE (if set) forces a fixed profile on wake. Otherwise the
+# profile active right before each idle switch is remembered and restored.
 PERFORMANCE_PROFILE="${PERFORMANCE_PROFILE:-}"
-if [[ -z "$PERFORMANCE_PROFILE" ]]; then
-    startup_profile=$(get_current_profile)
-    if [[ "$startup_profile" == "$IDLE_PROFILE" ]]; then
-        # Was left in powersave from a previous run, use a sane default
-        PERFORMANCE_PROFILE="throughput-performance"
-        log "WARN" "System was already in idle profile at startup, defaulting performance profile to: $PERFORMANCE_PROFILE"
-    else
-        PERFORMANCE_PROFILE="$startup_profile"
-    fi
+
+# Fallback used only when the active profile can't be read, or is already the idle
+# profile at the moment we switch (e.g. left in powersave by a crashed run).
+RESTORE_FALLBACK="throughput-performance"
+
+# Seed the restore target from the current profile at startup; it is refreshed
+# right before each switch to the idle profile.
+restore_profile=$(get_current_profile)
+if [[ -z "$restore_profile" || "$restore_profile" == "$IDLE_PROFILE" ]]; then
+    restore_profile="$RESTORE_FALLBACK"
 fi
-log "INFO" "Performance profile: $PERFORMANCE_PROFILE | Idle profile: $IDLE_PROFILE"
+
+if [[ -n "$PERFORMANCE_PROFILE" ]]; then
+    log "INFO" "Performance profile (forced): $PERFORMANCE_PROFILE | Idle profile: $IDLE_PROFILE"
+else
+    log "INFO" "Restore profile (remembered): $restore_profile | Idle profile: $IDLE_PROFILE"
+fi
 
 wait_for_session_bus || exit 1
 
@@ -162,16 +171,25 @@ while true; do
 
     if [[ "$state" == "active" ]] && (( idle_ms >= IDLE_THRESHOLD_MS )); then
         idle_mins=$(( idle_secs / 60 ))
-        log "INFO" "Idle for ${idle_mins}m ${idle_secs}s — switching to $IDLE_PROFILE"
+        # Remember the profile active right now so we can restore it on wake
+        # (unless an explicit PERFORMANCE_PROFILE override is in effect).
+        if [[ -z "$PERFORMANCE_PROFILE" ]]; then
+            current_profile=$(get_current_profile)
+            if [[ -n "$current_profile" && "$current_profile" != "$IDLE_PROFILE" ]]; then
+                restore_profile="$current_profile"
+            fi
+        fi
+        log "INFO" "Idle for ${idle_mins}m ${idle_secs}s — switching to $IDLE_PROFILE (restore on wake: ${PERFORMANCE_PROFILE:-$restore_profile})"
         if switch_profile "$IDLE_PROFILE"; then
             log "INFO" "Switched to $IDLE_PROFILE"
             state="idle"
         fi
 
     elif [[ "$state" == "idle" ]] && (( idle_ms < WAKE_THRESHOLD_MS )); then
-        log "INFO" "User activity detected (idle dropped to ${idle_secs}s) — restoring $PERFORMANCE_PROFILE"
-        if switch_profile "$PERFORMANCE_PROFILE"; then
-            log "INFO" "Restored to $PERFORMANCE_PROFILE"
+        target_profile="${PERFORMANCE_PROFILE:-$restore_profile}"
+        log "INFO" "User activity detected (idle dropped to ${idle_secs}s) — restoring $target_profile"
+        if switch_profile "$target_profile"; then
+            log "INFO" "Restored to $target_profile"
             state="active"
         fi
     fi
