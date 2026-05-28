@@ -10,7 +10,7 @@ Each script is standalone, self-documenting, and follows a consistent style.
 | Script | Purpose |
 |--------|---------|
 | `git-co` | Fuzzy-matching git branch checkout |
-| `git-branch-clean` | Delete local branches whose remote is gone |
+| `git-branch-clean` | Delete local branches whose upstream is gone, or that have no upstream and are merged into the integration branch |
 | `git-branch-close` | FF-merge current branch into default, push, delete |
 | `git-commit-msg` | Generate a commit message from staged/unstaged changes using Claude |
 | `idle-power-manager.sh` | Switch CPU tuned profile on GNOME idle/wake |

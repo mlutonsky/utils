@@ -1,9 +1,10 @@
 #!/bin/bash
-# git-branch-clean — prune stale remote refs and delete local branches whose remote is gone
+# git-branch-clean — prune stale remote refs and delete obsolete local branches
 #
-# Runs git fetch --prune to remove stale remote tracking refs, then deletes every
-# local branch that was tracking a remote branch which no longer exists
-# (reported as ': gone]' by git branch -vv).
+# Runs git fetch --prune, then deletes:
+#   1. local branches whose upstream is gone (": gone]" in git branch -vv), and
+#   2. local branches with no upstream that are fully merged into the integration
+#      branch (resolved from origin/HEAD).
 #
 # Usage:
 #   git-branch-clean [-h|--help]
@@ -31,13 +32,33 @@ fi
 echo "Fetching and pruning..."
 git fetch --prune || { echo "fatal: failed to fetch from origin"; exit 1; }
 
+main_ref=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null)
+if [ -z "$main_ref" ]; then
+  echo "fatal: cannot determine origin/HEAD (try: git remote set-head origin -a)"
+  exit 1
+fi
+main_branch=${main_ref#origin/}
+
 gone=$(git branch -vv | awk '/: gone]/{print ($1 == "*" ? $2 : $1)}')
 
-if [ -z "$gone" ]; then
+untracked_merged=$(
+  git for-each-ref --format='%(refname:short) %(upstream)' refs/heads/ \
+    | awk '$2 == "" {print $1}' \
+    | while IFS= read -r b; do
+        [ "$b" = "$main_branch" ] && continue
+        if git merge-base --is-ancestor "$b" "$main_ref"; then
+          echo "$b"
+        fi
+      done
+)
+
+to_delete=$(printf '%s\n%s\n' "$gone" "$untracked_merged" | awk 'NF && !seen[$0]++')
+
+if [ -z "$to_delete" ]; then
   echo "No stale branches to clean up."
   exit 0
 fi
 
 while IFS= read -r branch; do
   git branch -D "$branch"
-done <<< "$gone"
+done <<< "$to_delete"

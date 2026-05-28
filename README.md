@@ -7,7 +7,7 @@ A collection of small shell utilities.
 | Script | Description |
 |--------|-------------|
 | [git-co](#git-co) | Fuzzy-matching git branch checkout with typo correction and interactive selection |
-| [git-branch-clean](#git-branch-clean) | Prune stale remote refs and delete local branches whose remote is gone |
+| [git-branch-clean](#git-branch-clean) | Prune stale remote refs and delete obsolete local branches (upstream gone, or untracked-and-merged) |
 | [git-branch-close](#git-branch-close) | Fast-forward merge current branch into default branch, push, and delete it |
 | [git-commit-msg](#git-commit-msg) | Generate a commit message from staged (or unstaged) changes using Claude |
 | [idle-power-manager.sh](#idle-power-managersh) | Automatic CPU power profile switcher based on GNOME idle detection |
@@ -75,11 +75,17 @@ ln -s "$PWD/git-co" ~/.local/bin/git-co
 
 ## git-branch-clean
 
-**Prune stale remote refs and delete local branches whose remote is gone.**
+**Prune stale remote refs and delete obsolete local branches.**
 
-Runs `git fetch --prune`, then deletes every local branch that tracked a remote
-branch which no longer exists. Safe to run routinely after merging or closing
-feature branches.
+Runs `git fetch --prune`, then deletes:
+
+1. local branches whose upstream is gone (`: gone]` in `git branch -vv`), and
+2. local branches with no upstream that are fully merged into the integration
+   branch (resolved from `origin/HEAD`).
+
+Safe to run routinely after merging or closing feature branches. Branches with
+any local-only commits are kept (ancestry is checked with
+`git merge-base --is-ancestor`).
 
 ### Usage
 
@@ -92,8 +98,8 @@ git-branch-clean [-h|--help]
 ```sh
 $ git-branch-clean
 Fetching and pruning...
-Deleted branch feature/login (was abc1234).
-Deleted branch fix/typo (was def5678).
+Deleted branch feature/login (was abc1234).      # upstream was pruned
+Deleted branch local-cleanup (was def5678).      # no upstream, merged into main
 ```
 
 ### Install
