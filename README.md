@@ -443,3 +443,9 @@ neon2json < config.neon              # read stdin
 composer install
 ln -s "$PWD/neon2json" ~/.local/bin/neon2json
 ```
+
+---
+
+## License
+
+[MIT](LICENSE) © Martin Lutonsky
