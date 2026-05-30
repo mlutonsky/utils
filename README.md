@@ -2,6 +2,8 @@
 
 A collection of small shell utilities.
 
+> **Note:** Most of the code in this repository is AI-generated (with [Claude Code](https://claude.ai/code)) and human-reviewed.
+
 ## Scripts
 
 | Script | Description |
