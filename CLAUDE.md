@@ -13,6 +13,7 @@ Each script is standalone, self-documenting, and follows a consistent style.
 | `git-branch-clean` | Delete local branches whose upstream is gone, or that have no upstream and are merged into the integration branch |
 | `git-branch-close` | FF-merge current branch into default, push, delete |
 | `git-commit-msg` | Generate a commit message from staged/unstaged changes using Claude |
+| `git-changelog` | Draft the next CHANGELOG entry + version bump (patch/minor) using Claude; optionally commit, tag, and push the release |
 | `idle-power-manager.sh` | Switch CPU tuned profile on GNOME idle/wake |
 | `neon2json` | Convert NEON (Nette Object Notation) to JSON, from file or stdin |
 | `install.sh` | Install all scripts to ~/.local/bin via symlinks |
