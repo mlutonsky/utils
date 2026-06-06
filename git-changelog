@@ -410,9 +410,11 @@ elif grep -q '^## \[' "$CHANGELOG_FILE"; then
   echo "Inserted entry into $CHANGELOG_FILE."
 else
   # No existing entries — append after the preamble
-  printf '\n' >> "$CHANGELOG_FILE"
-  cat "$entryfile" >> "$CHANGELOG_FILE"
-  printf '\n' >> "$CHANGELOG_FILE"
+  {
+    printf '\n'
+    cat "$entryfile"
+    printf '\n'
+  } >> "$CHANGELOG_FILE"
   echo "Appended entry to $CHANGELOG_FILE."
 fi
 
