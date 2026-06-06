@@ -1,10 +1,10 @@
 #!/bin/bash
-# git-commit-msg — generate a commit message from staged (or unstaged) changes using Claude
+# git-commit-msg — generate a commit message from staged changes using Claude
 #
-# Inspects the current diff (staged changes first; falls back to all unstaged
-# changes if nothing is staged), sends it to Claude to generate a concise
+# Inspects the staged diff, sends it to Claude to generate a concise
 # commit message, then opens your configured git editor pre-filled with the
 # generated message so you can review and edit before committing.
+# Exits immediately if nothing is staged.
 #
 # Usage:
 #   git-commit-msg [-h|--help]
@@ -34,10 +34,9 @@ if ! command -v claude > /dev/null 2>&1; then
 fi
 
 diff=$(git diff --cached)
-[ -z "$diff" ] && diff=$(git diff)
 
 if [ -z "$diff" ]; then
-  echo "fatal: no changes to generate message for"
+  echo "fatal: no staged changes (use \"git add\" first)"
   exit 1
 fi
 

@@ -11,7 +11,7 @@ A collection of small shell utilities.
 | [git-co](#git-co) | Fuzzy-matching git branch checkout with typo correction and interactive selection |
 | [git-branch-clean](#git-branch-clean) | Prune stale remote refs and delete obsolete local branches (upstream gone, or untracked-and-merged) |
 | [git-branch-close](#git-branch-close) | Fast-forward merge current branch into default branch, push, and delete it |
-| [git-commit-msg](#git-commit-msg) | Generate a commit message from staged (or unstaged) changes using Claude |
+| [git-commit-msg](#git-commit-msg) | Generate a commit message from staged changes using Claude |
 | [git-changelog](#git-changelog) | Draft the next CHANGELOG entry and version bump (patch/minor) using Claude; optionally release it |
 | [idle-power-manager.sh](#idle-power-managersh) | Automatic CPU power profile switcher based on GNOME idle detection |
 | [neon2json](#neon2json) | Convert NEON (Nette Object Notation) to JSON, for LLMs and tools that don't speak NEON |
@@ -151,12 +151,12 @@ ln -s "$PWD/git-branch-close" ~/.local/bin/git-branch-close
 
 ## git-commit-msg
 
-**Generate a commit message from staged (or unstaged) changes using Claude.**
+**Generate a commit message from staged changes using Claude.**
 
-Inspects the current diff (staged changes first; falls back to all unstaged changes
-if nothing is staged), asks Claude to draft a concise commit message in plain
+Inspects the staged diff, asks Claude to draft a concise commit message in plain
 imperative style, then opens your configured git editor pre-filled with the result
-so you can review and edit before committing.
+so you can review and edit before committing. Exits immediately if nothing is
+staged.
 
 ### Usage
 
