@@ -17,7 +17,9 @@
 # The proposed entry is opened in your editor BEFORE CHANGELOG.md is touched, so
 # you can confirm, reword, or change the version. The version (and therefore the
 # patch-vs-minor bump) is taken from the "## [x.y.z] - date" header line you save,
-# so you can override Claude's suggestion just by editing that number.
+# so you can override Claude's suggestion just by editing that number. If a section
+# for that version already exists in CHANGELOG.md (e.g. you ran this before without
+# tagging), it is replaced in place rather than duplicated.
 #
 # With --release it also commits CHANGELOG.md, creates the release tag, and
 # pushes the commit and tag to origin. When uncommitted changes are included
@@ -27,6 +29,13 @@
 # --committed-only it is a CHANGELOG-only commit messaged "Release <version>".
 # Use --message to set the commit message explicitly (and non-interactively).
 #
+# With --unreleased the version step is skipped entirely: instead of a
+# "## [x.y.z] - date" entry, the changes are drafted into a "## [Unreleased]"
+# section at the top of the changelog. If that section already exists, Claude
+# merges the new bullets into it and de-duplicates, so running it repeatedly as
+# you work converges instead of restating everything. Cannot be combined with
+# --release.
+#
 # Usage:
 #   git-changelog [options]
 #
@@ -34,6 +43,7 @@
 #   -r, --release        Commit CHANGELOG.md, create the release tag, and push both
 #       --no-push        With --release, commit and tag locally but do not push
 #       --committed-only Ignore uncommitted changes; use only committed changes
+#   -u, --unreleased     Update/create the "## [Unreleased]" section; skip versioning
 #   -m, --message <msg>  Use <msg> as the release commit message (skips generation)
 #       --no-diff        Send only commit messages + diffstat to Claude (skip full diff)
 #   -y, --yes            Skip the confirmation prompt before releasing
@@ -43,6 +53,7 @@
 #
 # Examples:
 #   git-changelog                    # draft from committed + uncommitted changes, edit, insert
+#   git-changelog --unreleased       # draft/merge a "## [Unreleased]" section, no version bump
 #   git-changelog --committed-only   # consider only already-committed changes
 #   git-changelog --release          # bundle changes + CHANGELOG, commit (git-commit-msg), tag, push
 #   git-changelog -r -m "Add X"      # bundled release with an explicit commit message
@@ -62,6 +73,7 @@ PUSH=1
 INCLUDE_DIFF=1
 ASSUME_YES=0
 WORKING=1
+UNRELEASED=0
 FROM_TAG=""
 CHANGELOG_FILE=""
 COMMIT_MSG=""
@@ -70,6 +82,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     -h|--help) _print_help; exit 0 ;;
     -r|--release) RELEASE=1 ;;
+    -u|--unreleased) UNRELEASED=1 ;;
     --no-push) PUSH=0 ;;
     --no-diff) INCLUDE_DIFF=0 ;;
     -y|--yes) ASSUME_YES=1 ;;
@@ -85,6 +98,11 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
+
+if [ "$UNRELEASED" -eq 1 ] && [ "$RELEASE" -eq 1 ]; then
+  echo "fatal: --unreleased cannot be combined with --release"
+  exit 1
+fi
 
 if ! git rev-parse --git-dir > /dev/null 2>&1; then
   echo "fatal: not a git repository"
@@ -179,6 +197,17 @@ fi
 
 # --- Gather context for Claude -----------------------------------------------
 
+# In --unreleased mode, capture the current "## [Unreleased]" body (if any) so
+# Claude can merge the new changes into it and de-duplicate, rather than restate.
+EXISTING_UNRELEASED=""
+if [ "$UNRELEASED" -eq 1 ] && [ -f "$CHANGELOG_FILE" ]; then
+  EXISTING_UNRELEASED=$(awk '
+    /^##[[:space:]]*\[[Uu]nreleased\]/ { inblock=1; next }
+    inblock && /^##[[:space:]]*\[/ { inblock=0 }
+    inblock { print }
+  ' "$CHANGELOG_FILE")
+fi
+
 context=$(
   printf 'Previous released version: %s\n\n' "$CURRENT_VERSION"
   printf '=== Commits since %s ===\n' "$PREV_REF"
@@ -195,13 +224,38 @@ context=$(
     printf '\n=== Full diff (all changes since %s) ===\n' "$PREV_REF"
     git diff "$DIFF_SPEC"
   fi
+  if [ "$UNRELEASED" -eq 1 ] && [ -n "$EXISTING_UNRELEASED" ]; then
+    printf '\n=== Existing [Unreleased] section (merge new changes into THIS; keep its bullets, de-duplicate) ===\n'
+    printf '%s\n' "$EXISTING_UNRELEASED"
+  fi
   if [ -f "$CHANGELOG_FILE" ]; then
     printf '\n=== Existing changelog (top, for style reference) ===\n'
     head -n 40 "$CHANGELOG_FILE"
   fi
 )
 
-prompt='You are drafting the next changelog entry for a project that follows the
+if [ "$UNRELEASED" -eq 1 ]; then
+  prompt='You are maintaining the "## [Unreleased]" section of a changelog that
+follows the "Keep a Changelog" format. The input below contains the commits and
+diff since the last release, and — if it already exists — the current
+"[Unreleased]" section.
+
+Produce the updated BODY of the "[Unreleased]" section. Group bullets under the
+relevant "### Added", "### Changed", "### Fixed", "### Removed", "### Deprecated"
+headings (include only the headings that have entries). Each bullet is one
+concise line describing a notable or user-facing change. Match the terse,
+descriptive tone of the existing entries. Omit pure internal refactors with no
+observable effect unless there is nothing else to report.
+
+If an existing "[Unreleased]" section is provided, MERGE the new changes into it:
+keep its existing bullets, add only what is genuinely new, and de-duplicate — do
+not restate a change that is already listed.
+
+Output ONLY the body — the "### ..." headings and their bullets — and nothing
+else. Do NOT output the "## [Unreleased]" header line, a version, a date, any
+preamble, or code fences.'
+else
+  prompt='You are drafting the next changelog entry for a project that follows the
 "Keep a Changelog" format and Semantic Versioning. The input below contains the
 previous released version, the commits and diff since that release, and the top
 of the existing CHANGELOG for style reference.
@@ -228,6 +282,7 @@ REASON: <one short line explaining the bump choice>
 - ...
 ### Fixed
 - ...'
+fi
 
 echo "Asking Claude to draft the changelog..."
 response=$(printf '%s' "$context" | claude -p "$prompt")
@@ -239,13 +294,20 @@ fi
 
 # --- Parse Claude's response -------------------------------------------------
 
-bump=$(printf '%s\n' "$response" | sed -n 's/^BUMP:[[:space:]]*//p' | head -1 | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
-reason=$(printf '%s\n' "$response" | sed -n 's/^REASON:[[:space:]]*//p' | head -1)
-body=$(printf '%s\n' "$response" | awk 'f{print} /^---[[:space:]]*$/{f=1}')
+if [ "$UNRELEASED" -eq 1 ]; then
+  # The whole response is the merged [Unreleased] body. Strip any header line or
+  # code fences Claude may have added defensively.
+  bump=""; reason=""
+  body=$(printf '%s\n' "$response" | sed -e '/^##[[:space:]]*\[[Uu]nreleased\]/d' -e '/^```/d')
+else
+  bump=$(printf '%s\n' "$response" | sed -n 's/^BUMP:[[:space:]]*//p' | head -1 | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
+  reason=$(printf '%s\n' "$response" | sed -n 's/^REASON:[[:space:]]*//p' | head -1)
+  body=$(printf '%s\n' "$response" | awk 'f{print} /^---[[:space:]]*$/{f=1}')
 
-# Fallback if Claude did not emit the --- separator
-if [ -z "$body" ]; then
-  body=$(printf '%s\n' "$response" | grep -vE '^(BUMP|REASON):[[:space:]]*')
+  # Fallback if Claude did not emit the --- separator
+  if [ -z "$body" ]; then
+    body=$(printf '%s\n' "$response" | grep -vE '^(BUMP|REASON):[[:space:]]*')
+  fi
 fi
 # Drop leading blank lines from the body
 body=$(printf '%s\n' "$body" | sed -e '/./,$!d')
@@ -257,35 +319,37 @@ fi
 
 # --- Compute the candidate next versions -------------------------------------
 
-IFS='.' read -r vmaj vmin vpat <<< "$CURRENT_VERSION"
-vmaj=${vmaj:-0}; vmin=${vmin:-0}; vpat=${vpat:-0}
+if [ "$UNRELEASED" -eq 0 ]; then
+  IFS='.' read -r vmaj vmin vpat <<< "$CURRENT_VERSION"
+  vmaj=${vmaj:-0}; vmin=${vmin:-0}; vpat=${vpat:-0}
 
-PATCH_VERSION="$vmaj.$vmin.$((vpat + 1))"
-MINOR_VERSION="$vmaj.$((vmin + 1)).0"
+  PATCH_VERSION="$vmaj.$vmin.$((vpat + 1))"
+  MINOR_VERSION="$vmaj.$((vmin + 1)).0"
 
-case "$bump" in
-  patch) NEXT_VERSION="$PATCH_VERSION" ;;
-  minor) NEXT_VERSION="$MINOR_VERSION" ;;
-  *) echo "warning: unexpected bump '$bump' from Claude — defaulting to minor"
-     bump="minor"; NEXT_VERSION="$MINOR_VERSION" ;;
-esac
+  case "$bump" in
+    patch) NEXT_VERSION="$PATCH_VERSION" ;;
+    minor) NEXT_VERSION="$MINOR_VERSION" ;;
+    *) echo "warning: unexpected bump '$bump' from Claude — defaulting to minor"
+       bump="minor"; NEXT_VERSION="$MINOR_VERSION" ;;
+  esac
 
-TODAY=$(date +%Y-%m-%d)
+  TODAY=$(date +%Y-%m-%d)
 
-echo ""
-echo "Suggested bump: $bump"
-if [ "$bump" = "patch" ]; then
-  echo "  patch → $PATCH_VERSION   (suggested)"
-  echo "  minor → $MINOR_VERSION"
-else
-  echo "  patch → $PATCH_VERSION"
-  echo "  minor → $MINOR_VERSION   (suggested)"
+  echo ""
+  echo "Suggested bump: $bump"
+  if [ "$bump" = "patch" ]; then
+    echo "  patch → $PATCH_VERSION   (suggested)"
+    echo "  minor → $MINOR_VERSION"
+  else
+    echo "  patch → $PATCH_VERSION"
+    echo "  minor → $MINOR_VERSION   (suggested)"
+  fi
+  [ -n "$reason" ] && echo "Reason: $reason"
+  echo ""
+  echo "The version in the editor's '## [...]' header decides the release — change it"
+  echo "to the other candidate (or anything) to override the suggested bump."
+  echo ""
 fi
-[ -n "$reason" ] && echo "Reason: $reason"
-echo ""
-echo "The version in the editor's '## [...]' header decides the release — change it"
-echo "to the other candidate (or anything) to override the suggested bump."
-echo ""
 
 # --- Let the user confirm / edit the entry -----------------------------------
 
@@ -293,13 +357,21 @@ tmpfile=$(mktemp /tmp/git-changelog.XXXXXX)
 trap 'rm -f "$tmpfile"' EXIT
 
 {
-  printf '## [%s] - %s\n' "$NEXT_VERSION" "$TODAY"
+  if [ "$UNRELEASED" -eq 1 ]; then
+    printf '## [Unreleased]\n'
+  else
+    printf '## [%s] - %s\n' "$NEXT_VERSION" "$TODAY"
+  fi
   printf '%s\n' "$body"
 } > "$tmpfile"
 
 editor=$(git var GIT_EDITOR 2>/dev/null)
 [ -z "$editor" ] && editor="${VISUAL:-${EDITOR:-vi}}"
-echo "Opening editor — adjust the version/date and entries, save to continue (empty = abort)."
+if [ "$UNRELEASED" -eq 1 ]; then
+  echo "Opening editor — adjust the [Unreleased] entries, save to continue (empty = abort)."
+else
+  echo "Opening editor — adjust the version/date and entries, save to continue (empty = abort)."
+fi
 eval "$editor \"$tmpfile\""
 
 edited=$(cat "$tmpfile")
@@ -394,6 +466,46 @@ if [ ! -f "$CHANGELOG_FILE" ]; then
     printf '\n'
   } > "$CHANGELOG_FILE"
   echo "Created $CHANGELOG_FILE with the new entry."
+elif [ "$UNRELEASED" -eq 1 ] && grep -qE '^##[[:space:]]*\[[Uu]nreleased\]' "$CHANGELOG_FILE"; then
+  # Replace the existing [Unreleased] section in place (header through the line
+  # before the next "## [" version) with the edited, merged entry.
+  newfile=$(mktemp /tmp/git-changelog-new.XXXXXX)
+  awk -v entryfile="$entryfile" '
+    /^##[[:space:]]*\[[Uu]nreleased\]/ && !done {
+      while ((getline line < entryfile) > 0) print line
+      print ""
+      skip = 1
+      done = 1
+      next
+    }
+    skip && /^##[[:space:]]*\[/ { skip = 0 }
+    skip { next }
+    { print }
+  ' "$CHANGELOG_FILE" > "$newfile"
+  cat "$newfile" > "$CHANGELOG_FILE"
+  rm -f "$newfile"
+  echo "Updated the [Unreleased] section in $CHANGELOG_FILE."
+elif [ -n "$FINAL_VERSION" ] && grep -qF "## [$FINAL_VERSION]" "$CHANGELOG_FILE"; then
+  # A section for this exact version already exists (e.g. the tool was run before
+  # without tagging, then re-run keeping the same version). Replace that section in
+  # place — header through the line before the next "## [" — instead of inserting a
+  # duplicate header at the top.
+  newfile=$(mktemp /tmp/git-changelog-new.XXXXXX)
+  awk -v entryfile="$entryfile" -v ver="$FINAL_VERSION" '
+    index($0, "## [" ver "]") == 1 && !done {
+      while ((getline line < entryfile) > 0) print line
+      print ""
+      skip = 1
+      done = 1
+      next
+    }
+    skip && /^##[[:space:]]*\[/ { skip = 0 }
+    skip { next }
+    { print }
+  ' "$CHANGELOG_FILE" > "$newfile"
+  cat "$newfile" > "$CHANGELOG_FILE"
+  rm -f "$newfile"
+  echo "Replaced the existing [$FINAL_VERSION] section in $CHANGELOG_FILE."
 elif grep -q '^## \[' "$CHANGELOG_FILE"; then
   newfile=$(mktemp /tmp/git-changelog-new.XXXXXX)
   awk -v entryfile="$entryfile" '
@@ -454,6 +566,8 @@ if [ "$RELEASE" -eq 1 ]; then
   else
     echo "Committed and tagged $TAG locally (not pushed)."
   fi
+elif [ "$UNRELEASED" -eq 1 ]; then
+  echo "Done. [Unreleased] section in $CHANGELOG_FILE updated — commit it with your changes; re-run to add more later."
 elif [ "$WORKING" -eq 1 ] && [ "$HAS_UNCOMMITTED" -eq 1 ]; then
   echo "Done. $CHANGELOG_FILE updated — commit it together with your changes, then tag/push."
 else

@@ -205,7 +205,17 @@ are already committed.
 The version is taken from the `## [x.y.z] - date` header line you save, so you can
 override Claude's suggested bump just by editing that number — both candidate
 versions (patch and minor) are printed before the editor opens so you know what to
-type.
+type. If a section for that version is already in `CHANGELOG.md` (e.g. you ran the
+tool earlier without tagging and re-run it keeping the same version), the existing
+section is **replaced in place** instead of being duplicated.
+
+Pass `--unreleased` (`-u`) to skip the version step entirely: instead of a
+`## [x.y.z] - date` entry, the changes are drafted into a `## [Unreleased]` section
+at the top of the changelog. If that section already exists, Claude **merges** the
+new bullets into it and **de-duplicates**, so running it repeatedly as you work
+converges instead of restating everything. Use it to accumulate notes between
+releases; cut the real versioned entry later with a normal run. Cannot be combined
+with `--release`.
 
 With `--release` it also commits `CHANGELOG.md`, creates the release tag (mirroring
 the repo's existing tag prefix, e.g. `v`), and pushes the commit and tag to origin.
@@ -229,6 +239,7 @@ git-changelog [options]
 | `-r, --release` | Commit `CHANGELOG.md`, create the release tag, and push both |
 | `--no-push` | With `--release`, commit and tag locally but do not push |
 | `--committed-only` | Ignore uncommitted changes; consider only committed changes |
+| `-u, --unreleased` | Update/create the `## [Unreleased]` section instead of a versioned entry; skip the bump |
 | `-m, --message <msg>` | Use `<msg>` as the release commit message (skips generation) |
 | `--no-diff` | Send only commit messages + diffstat to Claude (skip the full diff) |
 | `-y, --yes` | Skip the confirmation prompt before releasing |
@@ -240,6 +251,7 @@ git-changelog [options]
 
 ```sh
 git-changelog                     # draft from committed + uncommitted changes, edit, insert
+git-changelog --unreleased        # draft/merge a "## [Unreleased]" section, no version bump
 git-changelog --committed-only    # consider only already-committed changes
 git-changelog --release           # bundle changes + CHANGELOG; commit msg via git-commit-msg; tag; push
 git-changelog -r -m "Add X"       # bundled release with an explicit commit message
