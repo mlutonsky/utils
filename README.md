@@ -12,6 +12,7 @@ A collection of small shell utilities.
 | [git-branch-clean](#git-branch-clean) | Prune stale remote refs and delete obsolete local branches (upstream gone, or untracked-and-merged) |
 | [git-branch-close](#git-branch-close) | Fast-forward merge current branch into default branch, push, and delete it |
 | [git-commit-msg](#git-commit-msg) | Generate a commit message from staged changes using Claude |
+| [git-autocommit](#git-autocommit) | Split all working-tree changes into atomic commits using Claude; review the plan, then commit |
 | [git-changelog](#git-changelog) | Draft the next CHANGELOG entry and version bump (patch/minor) using Claude; optionally release it |
 | [neon2json](#neon2json) | Convert NEON (Nette Object Notation) to JSON, for LLMs and tools that don't speak NEON |
 
@@ -180,6 +181,73 @@ Generating commit message...
 
 ```sh
 ln -s "$PWD/git-commit-msg" ~/.local/bin/git-commit-msg
+```
+
+---
+
+## git-autocommit
+
+**Split working-tree changes into atomic commits using Claude.**
+
+Inspects **all** uncommitted changes — staged, unstaged, and untracked files —
+and asks Claude to group them into a small set of atomic, semantically related
+commits. After you **review and approve** the plan, it creates those commits in
+order.
+
+Every change is presented to Claude as an assignable unit: individual diff
+**hunks** for tracked text files, and **whole files** for new (untracked) or
+binary files. Claude assigns each unit to a commit and writes its message. When a
+file's hunks are split across commits the tool performs hunk-level surgery
+(`git apply --cached`); when all of a file's changes land in one commit it is
+staged whole.
+
+Nothing is committed until you approve the plan. If a partial patch cannot be
+applied cleanly (e.g. two hunks bound for different commits sit too close
+together), the tool **aborts and restores every change as uncommitted** — you
+never end up in a half-committed state. The tool manages staging itself: it
+unstages everything before it starts, so your prior staging selection is not
+preserved.
+
+### Usage
+
+```
+git-autocommit [-h|--help]
+```
+
+### Example output
+
+```sh
+$ git-autocommit
+Asking Claude to group 4 hunk(s) and 1 whole file(s) into commits...
+
+Plan: 3 commit(s)
+
+[1] Add login() helper
+      src/auth.js  (H1)
+[2] Fix greeting typo
+      src/app.js   (H3)
+      README.md    (whole file)
+[3] Add usage notes
+      NOTES.md     (new file)
+
+Create these commits? [y/N] y
+Committed [1/3] Add login() helper
+Committed [2/3] Fix greeting typo
+Committed [3/3] Add usage notes
+
+Done — created 3 commit(s).
+```
+
+### Requirements
+
+- `git`
+- `claude` — Claude CLI (`npm install -g @anthropic-ai/claude-code` or see [claude.ai/code](https://claude.ai/code))
+- `jq` — parses Claude's JSON commit plan
+
+### Install
+
+```sh
+ln -s "$PWD/git-autocommit" ~/.local/bin/git-autocommit
 ```
 
 ---

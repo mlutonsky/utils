@@ -1,0 +1,402 @@
+#!/bin/bash
+# git-autocommit — split working-tree changes into atomic commits using Claude
+#
+# Inspects all uncommitted changes (staged, unstaged, and untracked files), asks
+# Claude to group them into a small set of atomic, semantically related commits,
+# then — after you review and approve the plan — creates those commits in order.
+#
+# Every change is presented to Claude as an assignable unit: individual diff
+# hunks for tracked text files, and whole files for new (untracked) or binary
+# files. Claude assigns each unit to a commit and writes its message. When a
+# file's hunks are split across commits the tool performs hunk-level surgery
+# (git apply --cached); when all of a file's changes land in one commit it is
+# staged whole.
+#
+# Nothing is committed until you approve the plan. If a partial patch cannot be
+# applied cleanly (e.g. two hunks bound for different commits sit too close
+# together), the tool aborts and restores every change as uncommitted — you never
+# end up in a half-committed state.
+#
+# The tool manages staging itself: it unstages everything before it starts, so
+# your prior staging selection is not preserved. On abort your changes are all
+# left in the working tree as uncommitted (unstaged).
+#
+# Usage:
+#   git-autocommit [-h|--help]
+#
+# Examples:
+#   git-autocommit          # group all changes, review the plan, create commits
+#
+# Requirements:
+#   git
+#   claude   Claude CLI (https://claude.ai/code)
+#   jq       parse Claude's JSON commit plan
+
+_print_help() {
+  awk 'NR==1{next} /^#/{sub(/^# ?/,""); print; next} {exit}' "$0"
+}
+
+case "$1" in
+  -h|--help) _print_help; exit 0 ;;
+  "") ;;
+  *) echo "fatal: unknown option: $1"; exit 1 ;;
+esac
+
+if ! git rev-parse --git-dir > /dev/null 2>&1; then
+  echo "fatal: not a git repository"
+  exit 1
+fi
+
+for tool in claude jq; do
+  if ! command -v "$tool" > /dev/null 2>&1; then
+    echo "fatal: $tool not found"
+    exit 1
+  fi
+done
+
+REPO_ROOT=$(git rev-parse --show-toplevel)
+cd "$REPO_ROOT" || { echo "fatal: cannot cd to repo root"; exit 1; }
+
+ORIG_HEAD=$(git rev-parse HEAD 2>/dev/null)
+if [ -z "$ORIG_HEAD" ]; then
+  echo "fatal: no commits yet — cannot autocommit onto an unborn branch"
+  exit 1
+fi
+
+# --- Detect that there is something to commit --------------------------------
+
+UNTRACKED=$(git ls-files --others --exclude-standard)
+if git diff --quiet HEAD 2>/dev/null && [ -z "$UNTRACKED" ]; then
+  echo "fatal: nothing to commit (working tree clean)"
+  exit 1
+fi
+
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/git-autocommit.XXXXXX")
+trap 'rm -rf "$WORK"' EXIT
+
+# --- Parse the tracked diff into per-file headers and numbered hunks ---------
+
+# Force standard a/ b/ prefixes regardless of the user's diff.mnemonicPrefix /
+# diff.noprefix config, so header parsing and `git apply -p1` stay consistent.
+git diff --src-prefix=a/ --dst-prefix=b/ HEAD > "$WORK/diff.raw"
+: > "$WORK/files.tsv"   # fileId \t path
+: > "$WORK/map.tsv"     # hunkId \t fileId
+
+awk -v dir="$WORK" '
+  /^diff --git / {
+    fileId++; inhunk=0; aminus=""
+    hdr = dir "/fhdr_" fileId; printf "" > hdr
+    print $0 >> hdr
+    p=$4; sub(/^b\//,"",p); path[fileId]=p
+    next
+  }
+  /^--- / {
+    if (!inhunk) { a=$2; sub(/^a\//,"",a); aminus=a; print $0 >> hdr }
+    next
+  }
+  /^\+\+\+ / {
+    if (!inhunk) {
+      b=$2; sub(/^b\//,"",b)
+      if (b != "/dev/null") path[fileId]=b
+      else if (aminus != "") path[fileId]=aminus
+      print $0 >> hdr
+    }
+    next
+  }
+  /^@@/ {
+    hunkId++; inhunk=1
+    hb = dir "/hbody_" hunkId; printf "" > hb; print $0 >> hb
+    print hunkId "\t" fileId >> (dir "/map.tsv")
+    curhunk=hb
+    next
+  }
+  {
+    if (inhunk) print $0 >> curhunk
+    else print $0 >> hdr
+  }
+  END {
+    for (i=1; i<=fileId; i++) print i "\t" path[i] >> (dir "/files.tsv")
+  }
+' "$WORK/diff.raw"
+
+TOTAL_HUNKS=$(wc -l < "$WORK/map.tsv" | tr -d ' ')
+TOTAL_HUNKS=${TOTAL_HUNKS:-0}
+
+# fileId -> path, and which fileIds actually have hunks
+declare -A PATH_OF_FILE
+declare -A FILE_HAS_HUNK
+declare -A FILE_OF_HUNK
+declare -A HUNK_GROUP
+while IFS=$'\t' read -r fid p; do
+  [ -n "$fid" ] && PATH_OF_FILE[$fid]="$p"
+done < "$WORK/files.tsv"
+while IFS=$'\t' read -r hid fid; do
+  [ -z "$hid" ] && continue
+  FILE_OF_HUNK[H$hid]="$fid"
+  FILE_HAS_HUNK[$fid]=1
+done < "$WORK/map.tsv"
+
+# --- Whole-file units: binary/zero-hunk tracked files, then untracked --------
+
+declare -A WF_PATH
+declare -A WF_KIND
+wf=0
+while IFS=$'\t' read -r fid p; do
+  [ -z "$fid" ] && continue
+  if [ -z "${FILE_HAS_HUNK[$fid]}" ]; then
+    wf=$((wf + 1)); WF_PATH[$wf]="$p"; WF_KIND[$wf]="binary"
+  fi
+done < "$WORK/files.tsv"
+if [ -n "$UNTRACKED" ]; then
+  while IFS= read -r p; do
+    [ -z "$p" ] && continue
+    wf=$((wf + 1)); WF_PATH[$wf]="$p"
+    if LC_ALL=C grep -Iq . -- "$p" 2>/dev/null || [ ! -s "$p" ]; then
+      WF_KIND[$wf]="untracked"
+    else
+      WF_KIND[$wf]="untracked-binary"
+    fi
+  done < <(printf '%s\n' "$UNTRACKED" | sort)
+fi
+TOTAL_WF=$wf
+
+# --- Build the annotated change listing for Claude ---------------------------
+
+{
+  if [ "$TOTAL_HUNKS" -gt 0 ]; then
+    printf '=== TRACKED CHANGES (hunks) ===\n'
+    prev_fid=""
+    for ((h=1; h<=TOTAL_HUNKS; h++)); do
+      fid=${FILE_OF_HUNK[H$h]}
+      if [ "$fid" != "$prev_fid" ]; then
+        printf '\nFile: %s\n' "${PATH_OF_FILE[$fid]}"
+        prev_fid="$fid"
+      fi
+      printf '[H%s]\n' "$h"
+      cat "$WORK/hbody_$h"
+    done
+  fi
+  if [ "$TOTAL_WF" -gt 0 ]; then
+    printf '\n=== WHOLE-FILE UNITS ===\n'
+    for ((k=1; k<=TOTAL_WF; k++)); do
+      case "${WF_KIND[$k]}" in
+        untracked)
+          printf '\n[F%s] new file: %s\n' "$k" "${WF_PATH[$k]}"
+          head -n 80 -- "${WF_PATH[$k]}" 2>/dev/null
+          ;;
+        untracked-binary)
+          printf '\n[F%s] new binary file: %s\n' "$k" "${WF_PATH[$k]}"
+          ;;
+        binary)
+          printf '\n[F%s] changed binary file: %s\n' "$k" "${WF_PATH[$k]}"
+          ;;
+      esac
+    done
+  fi
+} > "$WORK/prompt_diff"
+
+# --- Ask Claude for the commit plan ------------------------------------------
+
+prompt='You are grouping a set of uncommitted code changes into a small number of
+atomic, semantically coherent git commits.
+
+The input lists every change as an assignable unit:
+- Text hunks are labelled [H1], [H2], ... — each is a contiguous diff hunk.
+- Whole-file units are labelled [F1], [F2], ... — new (untracked) or binary files
+  committed as a whole.
+
+Rules:
+- Assign EVERY unit to exactly one commit. Do not omit, duplicate, or invent units.
+- Group changes that belong together (same feature, fix, refactor, or file purpose).
+- Prefer few meaningful commits over many tiny ones, but keep unrelated changes apart.
+- Order commits so that, where it matters, prerequisite changes come first.
+- Each commit message: first line imperative mood, under 72 chars; optional body
+  after a blank line (plain prose, no bullet lists) only if it adds real information.
+
+Output ONLY a JSON object — no markdown fences, no commentary — in exactly this shape:
+{"commits":[{"message":"...","hunks":["H1","H2"],"files":["F1"]}]}
+Use empty arrays where a commit has no hunks or no files.'
+
+# Expected id sets, for validation
+: > "$WORK/exp_hunks"; : > "$WORK/exp_files"
+for ((h=1; h<=TOTAL_HUNKS; h++)); do echo "H$h"; done | sort > "$WORK/exp_hunks"
+for ((k=1; k<=TOTAL_WF; k++)); do echo "F$k"; done | sort > "$WORK/exp_files"
+
+_validate_plan() {
+  # Reads $WORK/plan.json; echoes an error message (empty if valid)
+  if ! jq -e '.commits | type == "array" and length > 0' "$WORK/plan.json" > /dev/null 2>&1; then
+    echo "plan has no commits"; return
+  fi
+  if jq -e '[.commits[].message | select(. == null or (. | ascii_downcase | test("^\\s*$")))] | length > 0' \
+       "$WORK/plan.json" > /dev/null 2>&1; then
+    echo "a commit has an empty message"; return
+  fi
+  jq -r '.commits[].hunks[]?' "$WORK/plan.json" | sort > "$WORK/asg_hunks"
+  jq -r '.commits[].files[]?' "$WORK/plan.json" | sort > "$WORK/asg_files"
+
+  local dup missing unknown
+  dup=$( { uniq -d "$WORK/asg_hunks"; uniq -d "$WORK/asg_files"; } )
+  [ -n "$dup" ] && { echo "unit(s) assigned to more than one commit: ${dup//$'\n'/ }"; return; }
+  missing=$( { comm -23 "$WORK/exp_hunks" <(uniq "$WORK/asg_hunks"); comm -23 "$WORK/exp_files" <(uniq "$WORK/asg_files"); } )
+  [ -n "$missing" ] && { echo "unit(s) not assigned to any commit: ${missing//$'\n'/ }"; return; }
+  unknown=$( { comm -13 "$WORK/exp_hunks" <(uniq "$WORK/asg_hunks"); comm -13 "$WORK/exp_files" <(uniq "$WORK/asg_files"); } )
+  [ -n "$unknown" ] && { echo "unknown unit(s) referenced: ${unknown//$'\n'/ }"; return; }
+  echo ""
+}
+
+echo "Asking Claude to group $TOTAL_HUNKS hunk(s) and $TOTAL_WF whole file(s) into commits..."
+
+plan_err=""
+attempt=0
+while [ "$attempt" -lt 2 ]; do
+  attempt=$((attempt + 1))
+  ask="$prompt"
+  if [ -n "$plan_err" ]; then
+    ask="$prompt
+
+Your previous answer was invalid: $plan_err
+Return a corrected JSON object that assigns every unit exactly once."
+  fi
+  response=$(claude -p "$ask" < "$WORK/prompt_diff")
+  printf '%s\n' "$response" | sed '/^```/d' > "$WORK/plan.json"
+  plan_err=$(_validate_plan)
+  [ -z "$plan_err" ] && break
+  [ "$attempt" -lt 2 ] && echo "Plan invalid ($plan_err) — asking Claude to correct it..."
+done
+
+if [ -n "$plan_err" ]; then
+  echo "fatal: Claude did not return a valid commit plan ($plan_err)"
+  exit 1
+fi
+
+# --- Load the plan into arrays -----------------------------------------------
+
+NCOMMITS=$(jq '.commits | length' "$WORK/plan.json")
+declare -a MSG HUNKS FILES
+for ((i=0; i<NCOMMITS; i++)); do
+  MSG[i]=$(jq -r ".commits[$i].message" "$WORK/plan.json")
+  mapfile -t _h < <(jq -r ".commits[$i].hunks[]? // empty" "$WORK/plan.json")
+  mapfile -t _f < <(jq -r ".commits[$i].files[]? // empty" "$WORK/plan.json")
+  HUNKS[i]="${_h[*]}"
+  FILES[i]="${_f[*]}"
+  for h in "${_h[@]}"; do HUNK_GROUP[$h]=$i; done
+done
+
+# Determine which files are confined to a single commit (=> staged whole) versus
+# split across commits (=> hunk-level surgery).
+declare -A FILE_SINGLE
+for fid in "${!FILE_HAS_HUNK[@]}"; do
+  first=""; single=1
+  for ((h=1; h<=TOTAL_HUNKS; h++)); do
+    [ "${FILE_OF_HUNK[H$h]}" = "$fid" ] || continue
+    g=${HUNK_GROUP[H$h]}
+    if [ -z "$first" ]; then first="$g"; elif [ "$g" != "$first" ]; then single=0; break; fi
+  done
+  FILE_SINGLE[$fid]=$single
+done
+
+# --- Show the plan and confirm -----------------------------------------------
+
+echo ""
+echo "Plan: $NCOMMITS commit(s)"
+for ((i=0; i<NCOMMITS; i++)); do
+  echo ""
+  printf '[%d] %s\n' "$((i + 1))" "$(printf '%s' "${MSG[$i]}" | head -n1)"
+  # group this commit's hunks by file
+  declare -A _byfile=()
+  for h in ${HUNKS[$i]}; do
+    fid=${FILE_OF_HUNK[$h]}
+    _byfile[$fid]+=" $h"
+  done
+  for fid in "${!_byfile[@]}"; do
+    labels=${_byfile[$fid]# }; labels=${labels// /,}
+    if [ "${FILE_SINGLE[$fid]}" = "1" ]; then
+      printf '      %s  (whole file)\n' "${PATH_OF_FILE[$fid]}"
+    else
+      printf '      %s  (%s)\n' "${PATH_OF_FILE[$fid]}" "$labels"
+    fi
+  done
+  unset _byfile
+  for f in ${FILES[$i]}; do
+    k=${f#F}
+    case "${WF_KIND[$k]}" in
+      binary)           note="binary, whole file" ;;
+      untracked-binary) note="new binary file" ;;
+      *)                note="new file" ;;
+    esac
+    printf '      %s  (%s)\n' "${WF_PATH[$k]}" "$note"
+  done
+done
+
+echo ""
+# Prompt on the controlling terminal — the script's stdin may have been consumed
+# (e.g. by the claude CLI), so /dev/tty is the reliable source for the answer.
+if { true < /dev/tty; } 2>/dev/null; then
+  read -r -p "Create these commits? [y/N] " ans < /dev/tty
+else
+  read -r -p "Create these commits? [y/N] " ans
+fi
+case "$ans" in
+  y|Y|yes|YES) ;;
+  *) echo "Aborted — no changes made."; exit 0 ;;
+esac
+
+# --- Execute -----------------------------------------------------------------
+
+_rollback() {
+  echo "Rolling back — restoring your changes as uncommitted..."
+  git reset -q --mixed "$ORIG_HEAD"
+}
+
+_fail() {
+  echo "fatal: $1"
+  _rollback
+  exit 1
+}
+
+# Unstage everything so the index matches HEAD and partial patches apply cleanly.
+git reset -q || { echo "fatal: git reset failed"; exit 1; }
+
+for ((i=0; i<NCOMMITS; i++)); do
+  # Stage this commit's hunks, grouped by file.
+  declare -A _byfile=()
+  for h in ${HUNKS[$i]}; do
+    fid=${FILE_OF_HUNK[$h]}
+    _byfile[$fid]+=" $h"
+  done
+  for fid in "${!_byfile[@]}"; do
+    path="${PATH_OF_FILE[$fid]}"
+    if [ "${FILE_SINGLE[$fid]}" = "1" ]; then
+      git add -A -- "$path" || { unset _byfile; _fail "failed to stage $path"; }
+    else
+      # Build a patch of just this commit's hunks for this file and apply it.
+      patch="$WORK/apply.patch"
+      cat "$WORK/fhdr_$fid" > "$patch"
+      read -ra _hn <<< "${_byfile[$fid]}"
+      for h in $(printf '%s\n' "${_hn[@]#H}" | sort -n); do
+        cat "$WORK/hbody_$h" >> "$patch"
+      done
+      if ! git apply --cached --recount "$patch" 2>"$WORK/apply.err"; then
+        unset _byfile
+        echo "---"
+        cat "$WORK/apply.err"
+        echo "---"
+        _fail "could not apply hunks for $path to commit $((i + 1)) — the split likely places two hunks too close together; commit this file manually or re-run"
+      fi
+    fi
+  done
+  unset _byfile
+
+  # Stage this commit's whole-file units.
+  for f in ${FILES[$i]}; do
+    k=${f#F}
+    git add -A -- "${WF_PATH[$k]}" || _fail "failed to stage ${WF_PATH[$k]}"
+  done
+
+  printf '%s\n' "${MSG[$i]}" > "$WORK/msg"
+  git commit -q -F "$WORK/msg" || _fail "commit $((i + 1)) failed"
+  printf 'Committed [%d/%d] %s\n' "$((i + 1))" "$NCOMMITS" "$(printf '%s' "${MSG[$i]}" | head -n1)"
+done
+
+echo ""
+echo "Done — created $NCOMMITS commit(s)."
