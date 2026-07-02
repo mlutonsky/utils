@@ -44,12 +44,20 @@ prompt='Generate a git commit message for this diff.
 
 Rules:
 - Output ONLY the commit message — no preamble, no explanation, no markdown
+- Do NOT wrap the message in code fences or backticks (```); output raw text only
 - First line: imperative mood, under 72 characters (e.g. "Fix login timeout", not "Fixed" or "Fixes")
 - If the change is non-trivial, add a blank line then a concise body (what changed and why, not how)
 - Do not add bullet lists or headers to the body — plain prose only'
 
 echo "Generating commit message..."
 message=$(printf '%s' "$diff" | claude -p "$prompt")
+
+# Strip a wrapping markdown code fence if Claude added one despite the prompt.
+message=$(printf '%s' "$message" | awk '
+  NR==1 && /^[[:space:]]*```/ { fenced=1; next }
+  fenced && /^[[:space:]]*```[[:space:]]*$/ { next }
+  { print }
+')
 
 if [ -z "$message" ]; then
   echo "fatal: claude returned an empty message"
