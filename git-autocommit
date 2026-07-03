@@ -367,7 +367,11 @@ for ((i=0; i<NCOMMITS; i++)); do
   for fid in "${!_byfile[@]}"; do
     path="${PATH_OF_FILE[$fid]}"
     if [ "${FILE_SINGLE[$fid]}" = "1" ]; then
-      git add -A -- "$path" || { unset _byfile; _fail "failed to stage $path"; }
+      # -f so a file that was staged-but-git-ignored when the tool started (and
+      # which our own `git reset` above just unstaged) can be re-staged. Every
+      # path here comes from the HEAD diff, so it was already in the index — the
+      # user intended it tracked — and forcing only restores that state.
+      git add -A -f -- "$path" || { unset _byfile; _fail "failed to stage $path"; }
     else
       # Build a patch of just this commit's hunks for this file and apply it.
       patch="$WORK/apply.patch"
@@ -387,10 +391,13 @@ for ((i=0; i<NCOMMITS; i++)); do
   done
   unset _byfile
 
-  # Stage this commit's whole-file units.
+  # Stage this commit's whole-file units. -f for the same reason as above: a
+  # changed-binary unit comes from the HEAD diff and may be staged-but-ignored;
+  # untracked units come from --exclude-standard and are never ignored, so there
+  # forcing is a harmless no-op.
   for f in ${FILES[$i]}; do
     k=${f#F}
-    git add -A -- "${WF_PATH[$k]}" || _fail "failed to stage ${WF_PATH[$k]}"
+    git add -A -f -- "${WF_PATH[$k]}" || _fail "failed to stage ${WF_PATH[$k]}"
   done
 
   printf '%s\n' "${MSG[$i]}" > "$WORK/msg"
