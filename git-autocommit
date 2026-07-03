@@ -78,7 +78,11 @@ trap 'rm -rf "$WORK"' EXIT
 
 # Force standard a/ b/ prefixes regardless of the user's diff.mnemonicPrefix /
 # diff.noprefix config, so header parsing and `git apply -p1` stay consistent.
-git diff --src-prefix=a/ --dst-prefix=b/ HEAD > "$WORK/diff.raw"
+# --no-renames so a rename is emitted as an independent delete + add rather than
+# a single `rename from/to` entry: the parser keys every unit off the b/ path, so
+# a rename would otherwise stage only the new path and silently orphan the old
+# path's deletion (e.g. renaming a folder left every old file uncommitted).
+git diff --no-renames --src-prefix=a/ --dst-prefix=b/ HEAD > "$WORK/diff.raw"
 : > "$WORK/files.tsv"   # fileId \t path
 : > "$WORK/map.tsv"     # hunkId \t fileId
 
