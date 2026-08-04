@@ -14,6 +14,10 @@
 #
 # Requirements:
 #   claude   Claude CLI (https://claude.ai/code)
+#
+# Configuration:
+#   Runs Claude with --model sonnet, independent of your default Claude Code
+#   model — generating a commit message does not need a larger model.
 
 _print_help() {
   awk 'NR==1{next} /^#/{sub(/^# ?/,""); print; next} {exit}' "$0"
@@ -50,7 +54,7 @@ Rules:
 - Do not add bullet lists or headers to the body — plain prose only'
 
 echo "Generating commit message..."
-message=$(printf '%s' "$diff" | claude -p "$prompt")
+message=$(printf '%s' "$diff" | claude -p --model sonnet "$prompt")
 
 # Strip a wrapping markdown code fence if Claude added one despite the prompt.
 message=$(printf '%s' "$message" | awk '
