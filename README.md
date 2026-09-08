@@ -14,6 +14,7 @@ A collection of small shell utilities.
 | [git-commit-msg](#git-commit-msg) | Generate a commit message from staged changes using Claude |
 | [git-autocommit](#git-autocommit) | Split all working-tree changes into atomic commits using Claude; review the plan, then commit |
 | [git-changelog](#git-changelog) | Draft the next CHANGELOG entry and version bump (patch/minor) using Claude; optionally release it |
+| [git-released-in](#git-released-in) | Report which release tag a commit was first shipped in |
 | [neon2json](#neon2json) | Convert NEON (Nette Object Notation) to JSON, for LLMs and tools that don't speak NEON |
 
 ---
@@ -362,6 +363,75 @@ Opening editor — adjust the version/date and entries, save to continue (empty 
 ```sh
 ln -s "$PWD/git-changelog" ~/.local/bin/git-changelog
 ```
+
+---
+
+## git-released-in
+
+**Find the release tag a commit was first shipped in.**
+
+Lists the tags that contain the given commit and reports the one created first —
+the release the commit actually went out in. Ordering is by tag **creation date**,
+not by version number, so a hotfix tag cut later on an older branch (`v1.2.1`
+after `v2.0.0` was already out) does not shadow the real answer.
+
+Only tags present locally are considered. Run `git fetch --tags` first if the
+repository is behind.
+
+### Usage
+
+```
+git-released-in <commit-ish> [-a|--all] [-p|--pattern <glob>]
+git-released-in [-h|--help]
+```
+
+- `-a`, `--all` — list every tag containing the commit, oldest first
+- `-p`, `--pattern <glob>` — only consider tags matching `<glob>`, e.g. `'v*'`, for
+  repositories that also carry non-release tags
+- `-h`, `--help` — show the help message
+
+### Exit status
+
+- `0` — the commit is contained in a tag
+- `1` — fatal error (not a repository, unknown commit, bad option)
+- `2` — the commit is not contained in any tag yet
+
+### Examples
+
+```sh
+git-released-in abc1234           # which release shipped this commit
+git-released-in HEAD~5 --all      # every tag containing it, oldest first
+git-released-in abc1234 -p 'v*'   # ignore tags that are not releases
+```
+
+### Example output
+
+```sh
+$ git-released-in 96024f1
+96024f1 add aliases to htaccess
+Released in: v1.0.0 (2020-10-15)
+
+$ git-released-in 96024f1 --all
+96024f1 add aliases to htaccess
+Released in: v1.0.0 (2020-10-15)
+
+All tags containing it:
+  v1.0.0 (2020-10-15)
+  v1.1.0 (2022-03-31)
+
+$ git-released-in HEAD
+e6b72a1 changelog tweak
+Not released yet — no tag contains this commit.
+```
+
+### Install
+
+```sh
+ln -s "$PWD/git-released-in" ~/.local/bin/git-released-in
+```
+
+Named `git-*` and placed on your `PATH`, it also works as a git subcommand:
+`git released-in abc1234`.
 
 ---
 

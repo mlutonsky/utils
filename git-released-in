@@ -1,0 +1,96 @@
+#!/bin/bash
+# git-released-in — find the release tag a commit was first shipped in
+#
+# Lists the tags that contain the given commit and reports the one created
+# first — the release the commit actually went out in. Ordering is by tag
+# creation date, not by version number, so a hotfix tag cut later on an older
+# branch does not shadow the real answer.
+#
+# Only tags present locally are considered; run git fetch --tags first if the
+# repository is behind.
+#
+# Usage:
+#   git-released-in <commit-ish> [-a|--all] [-p|--pattern <glob>]
+#   git-released-in [-h|--help]
+#
+# Options:
+#   -a, --all              List every tag containing the commit, oldest first
+#   -p, --pattern <glob>   Only consider tags matching <glob>, e.g. 'v*'
+#   -h, --help             Show this help message
+#
+# Exit status:
+#   0   the commit is contained in a tag
+#   1   fatal error (not a repository, unknown commit, bad option)
+#   2   the commit is not contained in any tag yet
+#
+# Examples:
+#   git-released-in abc1234           # which release shipped this commit
+#   git-released-in HEAD~5 --all      # every tag containing it, oldest first
+#   git-released-in abc1234 -p 'v*'   # ignore tags that are not releases
+
+_print_help() {
+  awk 'NR==1{next} /^#/{sub(/^# ?/,""); print; next} {exit}' "$0"
+}
+
+COMMIT=""
+SHOW_ALL=0
+PATTERN=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -h|--help) _print_help; exit 0 ;;
+    -a|--all) SHOW_ALL=1 ;;
+    -p|--pattern) shift; PATTERN="$1" ;;
+    --pattern=*) PATTERN="${1#*=}" ;;
+    -*) echo "fatal: unknown option: $1"; exit 1 ;;
+    *)
+      if [ -n "$COMMIT" ]; then
+        echo "fatal: too many arguments: $1"
+        exit 1
+      fi
+      COMMIT="$1"
+      ;;
+  esac
+  shift
+done
+
+if [ -z "$COMMIT" ]; then
+  echo "fatal: no commit given"
+  _print_help
+  exit 1
+fi
+
+if ! git rev-parse --git-dir > /dev/null 2>&1; then
+  echo "fatal: not a git repository"
+  exit 1
+fi
+
+sha=$(git rev-parse --verify --quiet "${COMMIT}^{commit}")
+if [ -z "$sha" ]; then
+  echo "fatal: not a commit: $COMMIT"
+  exit 1
+fi
+
+tag_args=(--contains "$sha" --sort=creatordate --format='%(refname:short)|%(creatordate:short)')
+[ -n "$PATTERN" ] && tag_args+=(--list "$PATTERN")
+
+tags=$(git tag "${tag_args[@]}")
+
+git log -1 --format='%h %s' "$sha"
+
+if [ -z "$tags" ]; then
+  if [ -n "$PATTERN" ]; then
+    echo "Not released yet — no tag matching '$PATTERN' contains this commit."
+  else
+    echo "Not released yet — no tag contains this commit."
+  fi
+  exit 2
+fi
+
+echo "$tags" | awk -F'|' 'NR==1 {printf "Released in: %s (%s)\n", $1, $2}'
+
+if [ "$SHOW_ALL" -eq 1 ]; then
+  echo ""
+  echo "All tags containing it:"
+  echo "$tags" | awk -F'|' '{printf "  %s (%s)\n", $1, $2}'
+fi
