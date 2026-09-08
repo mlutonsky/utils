@@ -86,3 +86,4 @@ Prefer `git switch` over `git checkout` for branch operations.
    - Add a full section (`##`) with description, usage, example output, and install one-liner.
 4. **Update `CLAUDE.md`:** add a row to the Scripts table above.
 5. **Add a symlink entry to `install.sh`:** append the script name to the `SCRIPTS` array.
+6. **Add it to `.github/workflows/shellcheck.yml`:** append the script name to `additional_files`, so CI lints it (extensionless scripts are not picked up automatically).

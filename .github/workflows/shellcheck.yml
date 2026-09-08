@@ -15,4 +15,4 @@ jobs:
       - uses: actions/checkout@v5
       - uses: ludeeus/action-shellcheck@2.0.0
         with:
-          additional_files: git-co git-branch-clean git-branch-close
+          additional_files: git-co git-branch-clean git-branch-close git-commit-msg git-autocommit git-changelog git-released-in
