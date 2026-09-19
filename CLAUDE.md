@@ -17,6 +17,7 @@ Each script is standalone, self-documenting, and follows a consistent style.
 | `git-changelog` | Draft the next CHANGELOG entry + version bump (patch/minor) using Claude; optionally commit, tag, and push the release |
 | `git-released-in` | Report which release tag a commit was first shipped in |
 | `neon2json` | Convert NEON (Nette Object Notation) to JSON, from file or stdin |
+| `dpush` | Push files/dirs to a remote host at the same absolute path; doubles as a Nautilus script |
 | `install.sh` | Install all scripts to ~/.local/bin via symlinks |
 
 ---

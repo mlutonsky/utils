@@ -16,6 +16,7 @@ A collection of small shell utilities.
 | [git-changelog](#git-changelog) | Draft the next CHANGELOG entry and version bump (patch/minor) using Claude; optionally release it |
 | [git-released-in](#git-released-in) | Report which release tag a commit was first shipped in |
 | [neon2json](#neon2json) | Convert NEON (Nette Object Notation) to JSON, for LLMs and tools that don't speak NEON |
+| [dpush](#dpush) | Push files and directories to a remote host at the same absolute path, from the shell or the file manager |
 
 ---
 
@@ -471,6 +472,70 @@ neon2json < config.neon              # read stdin
 ```sh
 composer install
 ln -s "$PWD/neon2json" ~/.local/bin/neon2json
+```
+
+---
+
+## dpush
+
+**Push files and directories to a remote host at the same absolute path.**
+
+Copies each given file or directory to the configured remote host, keeping the
+exact same absolute path it has locally — `~/www/site/app/Model.php` lands in
+`~/www/site/app/Model.php` on the other side. Parent directories missing on the
+remote are created. Existing remote files are overwritten; nothing is ever
+deleted.
+
+Paths must live under your home directory. Items are grouped by their parent
+directory, so pushing several files from the same folder costs a single rsync
+run.
+
+Beyond the shell, it doubles as a **Nautilus script**: run
+`dpush --install-nautilus` once and the selection is uploaded from the
+right-click menu, with the result reported as a desktop notification and the
+full rsync output appended to `~/.cache/dpush.log`.
+
+### Usage
+
+```
+dpush [-n|--dry-run] <path>...
+dpush --install-nautilus
+dpush -h | --help
+```
+
+### Configuration
+
+`DPUSH_HOST` is required — an ssh destination. Desktop launchers do not read
+your shell profile, so put it in `~/.config/dpush.conf`:
+
+```sh
+DPUSH_HOST=devel.example.com
+```
+
+`DPUSH_EXCLUDE_FROM` optionally points at an rsync exclude file (default:
+`~/rsync.ignored` when it exists). It is applied to directory transfers only —
+a file you picked by hand is never silently skipped.
+
+### Examples
+
+```sh
+dpush app/model/User.php        # push a single file
+dpush app/model                 # push a whole directory
+dpush -n app/model              # dry run, changes nothing on either side
+dpush --install-nautilus        # right-click > Scripts > Upload to devel
+```
+
+### Requirements
+
+- `rsync`, `ssh` — with key-based access to `DPUSH_HOST`
+- `notify-send` — only for the Nautilus integration
+
+### Install
+
+```sh
+ln -s "$PWD/dpush" ~/.local/bin/dpush
+echo 'DPUSH_HOST=devel.example.com' > ~/.config/dpush.conf
+dpush --install-nautilus        # optional, GNOME Files only
 ```
 
 ---

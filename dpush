@@ -1,0 +1,234 @@
+#!/bin/bash
+# dpush — push files and directories to a remote host at the same absolute path
+#
+# Copies each given file or directory to the configured remote host, keeping
+# the exact same absolute path it has locally. Parent directories that do not
+# exist on the remote side are created. Existing remote files are overwritten;
+# nothing is ever deleted.
+#
+# Paths must live under your home directory. Items are grouped by their parent
+# directory, so a selection of several files costs a single rsync run.
+#
+# When started as a Nautilus script, the selected files are taken from the
+# environment, the result is reported as a desktop notification, and the full
+# rsync output is appended to ~/.cache/dpush.log.
+#
+# Usage:
+#   dpush [-n|--dry-run] <path>...
+#   dpush --install-nautilus
+#   dpush -h | --help
+#
+# Options:
+#   -n, --dry-run         List what would be transferred, transfer nothing
+#       --install-nautilus
+#                         Add "Upload to devel" to the Nautilus right-click
+#                         menu (Scripts submenu), pointing at this script
+#   -h, --help            Show this help message
+#
+# Configuration:
+#   DPUSH_HOST            Remote ssh destination. Required. Set it in the
+#                         environment, or in ~/.config/dpush.conf:
+#                             DPUSH_HOST=devel.example.com
+#                         Desktop launchers do not read your shell profile,
+#                         so the config file is the reliable place for it.
+#   DPUSH_EXCLUDE_FROM    rsync exclude file, applied to directory transfers
+#                         only (default: ~/rsync.ignored when it exists).
+#                         Explicitly selected files are never excluded.
+#
+# Examples:
+#   dpush app/model/User.php        # push a single file
+#   dpush app/model                 # push a whole directory
+#   dpush -n app/model              # dry run, show what would go
+#   dpush --install-nautilus        # right-click → Scripts → Upload to devel
+#
+# Requirements:
+#   rsync, ssh, and key-based ssh access to DPUSH_HOST
+
+_print_help() {
+  awk 'NR==1{next} /^#/{sub(/^# ?/,""); print; next} {exit}' "$0"
+}
+
+set -euo pipefail
+
+CONFIG_FILE="$HOME/.config/dpush.conf"
+LOG_FILE="$HOME/.cache/dpush.log"
+NAUTILUS_SCRIPTS_DIR="$HOME/.local/share/nautilus/scripts"
+NAUTILUS_MENU_NAME="Upload to devel"
+
+# Nautilus exports the selection here; its presence also means nobody is
+# watching stdout, so results have to go to a notification instead.
+NOTIFY=0
+[ -n "${NAUTILUS_SCRIPT_SELECTED_FILE_PATHS:-}" ] && NOTIFY=1
+
+fatal() {
+  if [ "$NOTIFY" -eq 1 ]; then
+    notify-send -u critical "dpush" "$1"
+  fi
+  echo "fatal: $1" >&2
+  exit 1
+}
+
+install_nautilus() {
+  local self dest
+  self="$(readlink -f "$0")"
+  dest="$NAUTILUS_SCRIPTS_DIR/$NAUTILUS_MENU_NAME"
+
+  mkdir -p "$NAUTILUS_SCRIPTS_DIR"
+  ln -sfn "$self" "$dest"
+
+  echo "Installed $dest -> $self"
+  command -v nautilus >/dev/null 2>&1 || echo "warning: nautilus not found on PATH"
+  echo "Right-click a file in Files, then Scripts > $NAUTILUS_MENU_NAME."
+  echo "To remove it again: rm \"$dest\""
+}
+
+DRY_RUN=0
+declare -a PATHS=()
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -h|--help) _print_help; exit 0 ;;
+    -n|--dry-run) DRY_RUN=1 ;;
+    --install-nautilus) install_nautilus; exit 0 ;;
+    --) shift; PATHS+=("$@"); break ;;
+    -*) fatal "unknown option: $1" ;;
+    *) PATHS+=("$1") ;;
+  esac
+  shift
+done
+
+if [ "$NOTIFY" -eq 1 ]; then
+  mapfile -t PATHS <<<"$NAUTILUS_SCRIPT_SELECTED_FILE_PATHS"
+fi
+
+[ "${#PATHS[@]}" -gt 0 ] || fatal "no paths given"
+
+if [ -z "${DPUSH_HOST:-}" ] && [ -f "$CONFIG_FILE" ]; then
+  # shellcheck source=/dev/null
+  . "$CONFIG_FILE"
+fi
+HOST="${DPUSH_HOST:-}"
+[ -n "$HOST" ] || fatal "DPUSH_HOST is not set (export it, or put it in $CONFIG_FILE)"
+
+EXCLUDE_FROM="${DPUSH_EXCLUDE_FROM:-$HOME/rsync.ignored}"
+[ -f "$EXCLUDE_FROM" ] || EXCLUDE_FROM=""
+
+# Files and directories are grouped separately: the exclude file is meant for
+# directory trees, and must never silently drop a file the user picked by hand.
+declare -A FILE_GROUPS=()
+declare -A DIR_GROUPS=()
+
+for path in "${PATHS[@]}"; do
+  [ -n "$path" ] || continue
+
+  resolved="$(realpath -e -- "$path" 2>/dev/null)" || fatal "no such file or directory: $path"
+
+  case "$resolved" in
+    "$HOME"/*) ;;
+    *) fatal "outside your home directory, refusing to push: $resolved" ;;
+  esac
+
+  parent="$(dirname -- "$resolved")"
+  if [ -d "$resolved" ]; then
+    DIR_GROUPS["$parent"]+="$resolved"$'\n'
+  else
+    FILE_GROUPS["$parent"]+="$resolved"$'\n'
+  fi
+done
+
+# push_group <parent> <use_excludes> <path>...
+push_group() {
+  local parent="$1" use_excludes="$2"
+  shift 2
+
+  local -a opts=(--archive --compress)
+  [ "$DRY_RUN" -eq 1 ] && opts+=(--dry-run --verbose)
+  if [ "$use_excludes" -eq 1 ] && [ -n "$EXCLUDE_FROM" ]; then
+    opts+=("--exclude-from=$EXCLUDE_FROM")
+  fi
+
+  # Single quotes in the path are escaped so they cannot break out of the
+  # quoting of the remote shell command below.
+  local quoted="${parent//\'/\'\\\'\'}"
+
+  # A dry run must not touch the remote side at all, so the directory is only
+  # probed, never created.
+  if [ "$DRY_RUN" -eq 1 ]; then
+    # SC2029: expanding the path on this side is the intent — the remote must
+    # be asked about the local path we are about to push to.
+    # shellcheck disable=SC2029
+    if ! ssh "$HOST" "test -d '$quoted'"; then
+      echo "would create remote directory: $parent"
+      printf 'would send: %s\n' "$@"
+      return 0
+    fi
+  else
+    # --rsync-path runs through the remote shell, so mkdir -p can create the
+    # missing branch before the receiving rsync starts.
+    opts+=(--rsync-path="mkdir -p '$quoted' && rsync")
+  fi
+
+  rsync "${opts[@]}" -- "$@" "$HOST:$parent/"
+}
+
+# Failures are collected rather than aborting: one unreachable group must not
+# silently cancel the rest of the selection. set -e cannot be relied on here,
+# because it is suppressed for a function whose status is being tested.
+push_all() {
+  local parent status=0
+  local -a items
+
+  for parent in "${!FILE_GROUPS[@]}"; do
+    mapfile -t items <<<"${FILE_GROUPS[$parent]%$'\n'}"
+    push_group "$parent" 0 "${items[@]}" || status=$?
+  done
+
+  for parent in "${!DIR_GROUPS[@]}"; do
+    mapfile -t items <<<"${DIR_GROUPS[$parent]%$'\n'}"
+    push_group "$parent" 1 "${items[@]}" || status=$?
+  done
+
+  return "$status"
+}
+
+count=0
+for parent in "${!FILE_GROUPS[@]}"; do
+  count=$((count + $(printf '%s' "${FILE_GROUPS[$parent]}" | grep -c '^')))
+done
+for parent in "${!DIR_GROUPS[@]}"; do
+  count=$((count + $(printf '%s' "${DIR_GROUPS[$parent]}" | grep -c '^')))
+done
+
+all_parents=("${!FILE_GROUPS[@]}" "${!DIR_GROUPS[@]}")
+if [ "${#all_parents[@]}" -eq 1 ]; then
+  target="${all_parents[0]/#$HOME/\~}"
+else
+  target="$HOST"
+fi
+
+status=0
+
+if [ "$NOTIFY" -eq 0 ]; then
+  push_all || status=$?
+  exit "$status"
+fi
+
+mkdir -p "$(dirname "$LOG_FILE")"
+output="$(push_all 2>&1)" || status=$?
+
+{
+  printf '\n===== %s  %s -> %s (%d item(s)) =====\n' \
+    "$(date '+%Y-%m-%d %H:%M:%S')" "$USER" "$HOST" "$count"
+  printf '%s\n' "$output"
+} >>"$LOG_FILE"
+
+if [ "$status" -eq 0 ]; then
+  notify-send "Uploaded to $HOST" "$count item(s) -> $target"
+else
+  reason="$(printf '%s' "$output" | grep -v '^[[:space:]]*$' | tail -1)"
+  notify-send -u critical "Upload to $HOST failed" \
+    "${reason:-rsync exited with $status}
+
+See $LOG_FILE"
+  exit "$status"
+fi
